@@ -1,7 +1,10 @@
 / {
 	chosen {
-		zephyr,console = &uart0;
-		zephyr,shell-uart = &uart0;
+		/* Disabled console - the log would corrupt/interfere 
+		 * with the binary frames when RP2040 is used a coprocessor
+		 *	zephyr,console = &uart0;
+		 *	zephyr,shell-uart = &uart0;
+	 	 */
 		zephyr,uart-mcumgr = &uart0;
 		zephyr,bt-mon-uart = &uart0;
 		zephyr,bt-c2h-uart = &uart0;
@@ -32,7 +35,19 @@
 	};
 };
 
+&pinctrl {
+	uart0_default: uart0_default {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 0, 6)>,
+				<NRF_PSEL(UART_RX, 0, 8)>;
+		};
+	};
+};
+
 &uart0 {
+	compatible = "nordic,nrf-uarte";
 	status = "okay";
 	current-speed = <921600>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-names = "default";
 };

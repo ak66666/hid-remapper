@@ -22,6 +22,9 @@
 #include <zephyr/usb/class/usbd_hid.h>
 #include <zephyr/usb/usbd.h>
 
+#include <zephyr/drivers/uart.h>
+#include "uart_bridge.h"
+
 #include "config.h"
 #include "descriptor_parser.h"
 #include "globals.h"
@@ -76,18 +79,19 @@ struct report_type {
 
 struct descriptor_type {
     uint16_t size;
-    uint8_t conn_idx;
+    uint16_t interface;
+    uint8_t hub_port;
     uint16_t vid;
     uint16_t pid;
     uint8_t data[512];
 };
 
-struct hogp_ready_type {
-    struct bt_hogp* hogp;
+struct disconnected_type {
+    uint16_t interface;
 };
 
-struct disconnected_type {
-    uint8_t conn_idx;
+struct hogp_ready_type {
+    struct bt_hogp* hogp;
 };
 
 struct set_report_type {
@@ -98,7 +102,7 @@ struct set_report_type {
 };
 
 K_MSGQ_DEFINE(report_q, sizeof(struct report_type), 16, 4);
-K_MSGQ_DEFINE(descriptor_q, sizeof(struct descriptor_type), 2, 4);
+K_MSGQ_DEFINE(descriptor_q, sizeof(struct descriptor_type), 8, 4);
 K_MSGQ_DEFINE(hogp_ready_q, sizeof(struct hogp_ready_type), CONFIG_BT_MAX_CONN, 4);
 K_MSGQ_DEFINE(disconnected_q, sizeof(struct disconnected_type), CONFIG_BT_MAX_CONN, 4);
 K_MSGQ_DEFINE(set_report_q, sizeof(struct set_report_type), 8, 4);
@@ -632,7 +636,8 @@ static void disconnected(struct bt_conn* conn, uint8_t reason) {
         bt_hogp_release(&hogps[conn_idx]);
     }
 
-    struct disconnected_type disconnected_item = { .conn_idx = conn_idx };
+    //struct disconnected_type disconnected_item = { .conn_idx = conn_idx };
+    struct disconnected_type disconnected_item = { .interface = (uint16_t)(conn_idx << 8) };
     CHK(k_msgq_put(&disconnected_q, &disconnected_item, K_NO_WAIT));
 
     count_connections();
@@ -737,7 +742,8 @@ static struct descriptor_type their_descriptor;
 static void hogp_map_read_cb(struct bt_hogp* hogp, uint8_t err, const uint8_t* data, size_t size, size_t offset) {
     if (data == NULL) {
         their_descriptor.size = offset;
-        their_descriptor.conn_idx = hogp_index(hogp);
+        //their_descriptor.conn_idx = hogp_index(hogp);
+	their_descriptor.interface = hogp_index(hogp) << 8; their_descriptor.hub_port = 0;
         their_descriptor.vid = device_vid[their_descriptor.conn_idx];
         their_descriptor.pid = device_pid[their_descriptor.conn_idx];
         CHK(k_msgq_put(&descriptor_q, &their_descriptor, K_NO_WAIT));
@@ -1262,6 +1268,161 @@ void unpair_single_device(uint8_t addr_type, const uint8_t addr[6]) {
     k_work_submit(&unpair_single_work);
 }
 
+static const struct device* const bridge_uart = DEVICE_DT_GET(DT_NODELABEL(uart0));
+static struct k_mutex uart_tx_mutex;
+
+static void uart_bridge_send_frame(BridgeMsgType type, const uint8_t* payload, uint16_t len) {
+    if (!device_is_ready(bridge_uart)) {
+        return;
+    }
+    bridge_header_t hdr = {
+        .magic0 = UART_BRIDGE_MAGIC0,
+        .magic1 = UART_BRIDGE_MAGIC1,
+        .type = type,
+        .len = len,
+    };
+    uint8_t crc = bridge_crc8((const uint8_t*)&hdr.type, sizeof(hdr.type) + sizeof(hdr.len));
+    for (uint16_t i = 0; i < len; i++) {
+        crc ^= payload[i];
+        for (uint8_t b = 0; b < 8; b++) {
+            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
+        }
+    }
+
+    k_mutex_lock(&uart_tx_mutex, K_FOREVER);
+    const uint8_t* hdr_bytes = (const uint8_t*)&hdr;
+    for (size_t i = 0; i < sizeof(hdr); i++) {
+        uart_poll_out(bridge_uart, hdr_bytes[i]);
+    }
+    for (uint16_t i = 0; i < len; i++) {
+        uart_poll_out(bridge_uart, payload[i]);
+    }
+    uart_poll_out(bridge_uart, crc);
+    k_mutex_unlock(&uart_tx_mutex);
+}
+
+static void handle_bridge_frame(BridgeMsgType type, const uint8_t* payload, uint16_t len) {
+    switch (type) {
+        case BridgeMsgType::DEV_CONNECTED: {
+            if (len < 7) {
+                break;
+            }
+            static struct descriptor_type desc_item;
+            memcpy(&desc_item.interface, &payload[0], 2);
+            memcpy(&desc_item.vid, &payload[2], 2);
+            memcpy(&desc_item.pid, &payload[4], 2);
+            desc_item.hub_port = payload[6];
+            uint16_t desc_len = len - 7;
+            if (desc_len > sizeof(desc_item.data)) {
+                desc_len = sizeof(desc_item.data);
+            }
+            desc_item.size = desc_len;
+            memcpy(desc_item.data, &payload[7], desc_len);
+            k_msgq_put(&descriptor_q, &desc_item, K_NO_WAIT);
+            break;
+        }
+        case BridgeMsgType::DEV_DISCONNECTED: {
+            if (len < 2) {
+                break;
+            }
+            struct disconnected_type disc_item;
+            memcpy(&disc_item.interface, &payload[0], 2);
+            k_msgq_put(&disconnected_q, &disc_item, K_NO_WAIT);
+            break;
+        }
+        case BridgeMsgType::INPUT_REPORT: {
+            if (len < 3) {
+                break;
+            }
+            static struct report_type rep_item;
+            memcpy(&rep_item.interface, &payload[0], 2);
+            rep_item.report_id = payload[2];
+            uint16_t data_len = len - 3;
+            rep_item.len = (data_len > sizeof(rep_item.data)) ? sizeof(rep_item.data) : data_len;
+            memcpy(rep_item.data, &payload[3], rep_item.len);
+            k_msgq_put(&report_q, &rep_item, K_NO_WAIT);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+static void bridge_uart_isr(const struct device* dev, void* user_data) {
+    enum class RxState { MAGIC0, MAGIC1, TYPE, LEN0, LEN1, PAYLOAD, CRC };
+    static RxState state = RxState::MAGIC0;
+    static BridgeMsgType msg_type;
+    static uint16_t payload_len = 0;
+    static uint16_t payload_pos = 0;
+    static uint8_t payload[520];
+
+    while (uart_irq_update(dev) && uart_irq_rx_ready(dev)) {
+        uint8_t buf[64];
+        int n = uart_fifo_read(dev, buf, sizeof(buf));
+        for (int idx = 0; idx < n; idx++) {
+            uint8_t b = buf[idx];
+            switch (state) {
+                case RxState::MAGIC0:
+                    if (b == UART_BRIDGE_MAGIC0) state = RxState::MAGIC1;
+                    break;
+                case RxState::MAGIC1:
+                    state = (b == UART_BRIDGE_MAGIC1) ? RxState::TYPE : RxState::MAGIC0;
+                    break;
+                case RxState::TYPE:
+                    msg_type = (BridgeMsgType)b;
+                    state = RxState::LEN0;
+                    break;
+                case RxState::LEN0:
+                    payload_len = b;
+                    state = RxState::LEN1;
+                    break;
+                case RxState::LEN1:
+                    payload_len |= ((uint16_t)b << 8);
+                    payload_pos = 0;
+                    if (payload_len > sizeof(payload)) {
+                        state = RxState::MAGIC0;
+                    } else {
+                        state = (payload_len > 0) ? RxState::PAYLOAD : RxState::CRC;
+                    }
+                    break;
+                case RxState::PAYLOAD:
+                    payload[payload_pos++] = b;
+                    if (payload_pos >= payload_len) state = RxState::CRC;
+                    break;
+                case RxState::CRC: {
+                    uint8_t hdr_bytes[3] = {
+                        (uint8_t)msg_type,
+                        (uint8_t)(payload_len & 0xFF),
+                        (uint8_t)(payload_len >> 8)
+                    };
+                    uint8_t crc = bridge_crc8(hdr_bytes, 3);
+                    for (uint16_t i = 0; i < payload_len; i++) {
+                        crc ^= payload[i];
+                        for (uint8_t bit = 0; bit < 8; bit++) {
+                            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
+                        }
+                    }
+                    if (crc == b) {
+                        handle_bridge_frame(msg_type, payload, payload_len);
+                    }
+                    state = RxState::MAGIC0;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static void bridge_uart_init() {
+    k_mutex_init(&uart_tx_mutex);
+    if (!device_is_ready(bridge_uart)) {
+        LOG_ERR("bridge_uart not ready");
+        return;
+    }
+    uart_irq_callback_user_data_set(bridge_uart, bridge_uart_isr, NULL);
+    uart_irq_rx_enable(bridge_uart);
+    LOG_INF("UART bridge initialized at %d baud", UART_BRIDGE_BAUD);
+}
 
 void my_mutexes_init() {
     for (int i = 0; i < (int8_t) MutexId::N; i++) {
@@ -1286,11 +1447,27 @@ void interval_override_updated() {
 }
 
 void queue_out_report(uint16_t interface, uint8_t report_id, const uint8_t* buffer, uint8_t len) {
-    // TODO
+    if ((interface & 0x1000) == 0) {
+        return;
+    }
+    uint8_t frame[3 + 64];
+    uint8_t copy_len = (len > 64) ? 64 : len;
+    memcpy(&frame[0], &interface, 2);
+    frame[2] = report_id;
+    memcpy(&frame[3], buffer, copy_len);
+    uart_bridge_send_frame(BridgeMsgType::OUT_REPORT, frame, 3 + copy_len);
 }
 
 void queue_set_feature_report(uint16_t interface, uint8_t report_id, const uint8_t* buffer, uint8_t len) {
-    // TODO
+    if ((interface & 0x1000) == 0) {
+        return;
+    }
+    uint8_t frame[3 + 64];
+    uint8_t copy_len = (len > 64) ? 64 : len;
+    memcpy(&frame[0], &interface, 2);
+    frame[2] = report_id;
+    memcpy(&frame[3], buffer, copy_len);
+    uart_bridge_send_frame(BridgeMsgType::SET_FEATURE, frame, 3 + copy_len);
 }
 
 void queue_get_feature_report(uint16_t interface, uint8_t report_id, uint8_t len) {
@@ -1312,6 +1489,7 @@ int main() {
     settings_load();
     descriptor_init();
     usb_init();
+    bridge_uart_init();
     scan_init();
     parse_our_descriptor();
     set_mapping_from_config();
@@ -1374,12 +1552,12 @@ int main() {
 
         while (!k_msgq_get(&disconnected_q, &disconnected_item, K_NO_WAIT)) {
             LOG_INF("device_disconnected_callback conn_idx=%d", disconnected_item.conn_idx);
-            device_disconnected_callback(disconnected_item.conn_idx);
+            device_disconnected_callback(disconnected_item.interface);
         }
 
         while (!k_msgq_get(&descriptor_q, &incoming_descriptor, K_NO_WAIT)) {
             LOG_HEXDUMP_DBG(incoming_descriptor.data, incoming_descriptor.size, "incoming_descriptor");
-            parse_descriptor(incoming_descriptor.vid, incoming_descriptor.pid, incoming_descriptor.data, incoming_descriptor.size, incoming_descriptor.conn_idx << 8, 0);
+            parse_descriptor(incoming_descriptor.vid, incoming_descriptor.pid, incoming_descriptor.data, incoming_descriptor.size, incoming_descriptor.interface, incoming_descriptor.hub_port);
         }
 
         if (resume_pending) {
