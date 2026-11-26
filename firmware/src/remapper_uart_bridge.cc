@@ -19,12 +19,50 @@
 #define USB_PORT2_DP 4 // Socket 2: D+ = GP4, D- = GP5
 #define USB_PORT3_DP 6 // Socket 3: D+ = GP6, D- = GP7
 
+static volatile uint64_t led_off_at_us = 0;
+
+static void led_pulse(uint32_t duration_ms) {
+#ifdef PICO_DEFAULT_LED_PIN
+    gpio_put(PICO_DEFAULT_LED_PIN, 1);
+    uint64_t target = time_us_64() + (uint64_t)duration_ms * 1000ULL;
+    if (target > led_off_at_us) {
+        led_off_at_us = target;
+    }
+#else
+    (void)duration_ms;
+#endif
+}
+
+static void led_update() {
+#ifdef PICO_DEFAULT_LED_PIN
+    if (led_off_at_us != 0 && time_us_64() >= led_off_at_us) {
+        gpio_put(PICO_DEFAULT_LED_PIN, 0);
+        led_off_at_us = 0;
+    }
+#endif
+}
+
+static void led_init() {
+#ifdef PICO_DEFAULT_LED_PIN
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    for (int i = 0; i < 3; i++) {
+        gpio_put(PICO_DEFAULT_LED_PIN, 1);
+        sleep_ms(60);
+        gpio_put(PICO_DEFAULT_LED_PIN, 0);
+        sleep_ms(60);
+    }
+#endif
+}
+
 // Offset interface IDs by 0x1000 so they never collide with nRF52840 BLE conn_idx << 8 (0x0000..0x0700)
 static inline uint16_t make_interface_id(uint8_t dev_addr, uint8_t instance) {
     return (uint16_t)(0x1000 | ((dev_addr & 0x0F) << 4) | (instance & 0x0F));
 }
 
 static void uart_send_frame(BridgeMsgType type, const uint8_t* payload, uint16_t len) {
+    led_pulse(25);
+
     bridge_header_t hdr = {
         .magic0 = UART_BRIDGE_MAGIC0,
         .magic1 = UART_BRIDGE_MAGIC1,
@@ -60,7 +98,6 @@ static void core1_main() {
     };
     tusb_init(1, &host_init);
 
-
     // Register Port 2 (GP4/GP5) and Port 3 (GP6/GP7) as additional root host ports
     pio_usb_host_add_port(USB_PORT2_DP, PIO_USB_PINOUT_DPDM);
     pio_usb_host_add_port(USB_PORT3_DP, PIO_USB_PINOUT_DPDM);
@@ -72,6 +109,8 @@ static void core1_main() {
 
 // TinyUSB Host Callbacks
 extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
+    led_pulse(200);
+
     uint16_t vid = 0, pid = 0;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
@@ -91,8 +130,9 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     tuh_hid_receive_report(dev_addr, instance);
 }
 
-
 extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
+    led_pulse(200);
+
     uint16_t iface = make_interface_id(dev_addr, instance);
     uart_send_frame(BridgeMsgType::DEV_DISCONNECTED, (const uint8_t*)&iface, sizeof(iface));
 }
@@ -160,6 +200,7 @@ static void poll_uart_rx() {
                     }
                 }
                 if (crc == b && payload_len >= 3) {
+                    led_pulse(25);
                     uint16_t iface;
                     memcpy(&iface, &payload[0], 2);
                     uint8_t dev_addr = (iface >> 4) & 0x0F;
@@ -179,9 +220,7 @@ static void poll_uart_rx() {
 }
 
 int main() {
-    // Pico-PIO-USB requires a 120 MHz (or 240 MHz) system clock
-    // AK: It is set to 192 MHz in pico_sdk_init()	
-    //set_sys_clock_khz(120000, true);
+    led_init();
 
     uart_init(BRIDGE_UART, UART_BRIDGE_BAUD);
     gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
@@ -193,6 +232,7 @@ int main() {
 
     while (true) {
         poll_uart_rx();
+        led_update();
         tight_loop_contents();
     }
 }
