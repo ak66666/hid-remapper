@@ -1,4 +1,4 @@
-import crc32 from './crc.js';
+ import crc32 from './crc.js';
 import usages from './usages.js';
 import examples from './examples.js';
 
@@ -60,9 +60,17 @@ const SET_MONITOR_ENABLED = 22;
 const CLEAR_QUIRKS = 23;
 const ADD_QUIRK = 24;
 const GET_QUIRK = 25;
+const GET_AUTH_STATUS = 26;
+const UNLOCK_SESSION = 27;
+const SET_PASSWORD = 28;
+const GET_BONDED_DEVICES = 29;
+const UNPAIR_DEVICE = 30;
+
+let bonded_devices = [];
 
 const PERSIST_CONFIG_SUCCESS = 1;
 const PERSIST_CONFIG_CONFIG_TOO_BIG = 2;
+const PERSIST_CONFIG_UNAUTHORIZED = 3;
 
 const ops = {
     "PUSH": 0,
@@ -174,6 +182,8 @@ let monitor_max_val = {};
 let unique_id_counter = 0;
 let save_to_device_checkmark_timeout_id = null;
 let busy = false;
+let auth_state = { password_enabled: false, session_unlocked: true };
+  
 const ignored_usages = new Set([
 ]);
 let modal_return_mapping = null;
@@ -218,6 +228,16 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("output-column-header").addEventListener("click", sort_by(['target_usage', 'source_port', 'source_usage', 'layers']));
     document.getElementById("layer-column-header").addEventListener("click", sort_by(['layers', 'source_port', 'source_usage', 'target_usage']));
 
+    document.getElementById("unlock_device").addEventListener("click", unlock_device);
+    document.getElementById("unlock_password_input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            unlock_device();
+        }
+    });
+    document.getElementById("set_password_btn").addEventListener("click", set_device_password);
+    document.getElementById("remove_password_btn").addEventListener("click", remove_device_password);
+    document.getElementById("refresh_bonded_devices").addEventListener("click", load_bonded_devices);
+
     if ("hid" in navigator) {
         navigator.hid.addEventListener('disconnect', hid_on_disconnect);
     } else {
@@ -258,7 +278,13 @@ async function open_device() {
                 await set_monitor_enabled(monitor_enabled);
                 await get_usages_from_device();
                 setup_usages_modals();
-                bluetooth_buttons_set_visibility(device.productName.includes("Bluetooth"));
+
+                const is_bt = device.productName.includes("Bluetooth");
+                bluetooth_buttons_set_visibility(is_bt);
+                await refresh_auth_status();
+                if (is_bt) {
+                    await load_bonded_devices();
+                }
             }
         }
     } catch (e) {
@@ -562,6 +588,10 @@ async function save_to_device() {
             case PERSIST_CONFIG_CONFIG_TOO_BIG:
                 display_error('Configuration too big to persist.');
                 break;
+            case PERSIST_CONFIG_UNAUTHORIZED:
+                display_error('Device is locked. Enter password to unlock before saving.');
+                await refresh_auth_status();
+                break;
             default:
                 throw new Error('Unknown PERSIST_CONFIG return code (' + return_code + ').');
         }
@@ -860,11 +890,112 @@ async function flash_b_side() {
 
 async function pair_new_device() {
     await send_feature_command(PAIR_NEW_DEVICE);
+    setTimeout(load_bonded_devices, 1500);
 }
 
 async function clear_bonds() {
     await send_feature_command(CLEAR_BONDS);
+    setTimeout(load_bonded_devices, 500);
 }
+
+function format_ble_mac(addr_bytes) {
+    // BLE addresses in Zephyr are stored little-endian
+    return Array.from(addr_bytes)
+        .reverse()
+        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+        .join(':');
+}
+
+async function load_bonded_devices() {
+    if (device == null) {
+        return;
+    }
+    try {
+        bonded_devices = [];
+        await send_feature_command(GET_BONDED_DEVICES, [[UINT32, 0]]);
+        const first = await read_config_feature([UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8]);
+        const total = first[0];
+        if (total > 0) {
+            bonded_devices.push({
+                index: first[1],
+                addr_type: first[2],
+                addr: first.slice(3, 9),
+                is_connected: first[9] !== 0,
+            });
+            for (let i = 1; i < total; i++) {
+                await send_feature_command(GET_BONDED_DEVICES, [[UINT32, i]]);
+                const item = await read_config_feature([UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8]);
+                bonded_devices.push({
+                    index: item[1],
+                    addr_type: item[2],
+                    addr: item.slice(3, 9),
+                    is_connected: item[9] !== 0,
+                });
+            }
+        }
+        render_bonded_devices();
+    } catch (e) {
+        display_error(e);
+    }
+}
+
+function render_bonded_devices() {
+    const list = document.getElementById("bonded_devices_list");
+    const empty_msg = document.getElementById("bonded_devices_empty");
+    clear_children(list);
+
+    if (bonded_devices.length === 0) {
+        empty_msg.classList.remove("d-none");
+        return;
+    }
+    empty_msg.classList.add("d-none");
+
+    const can_write = (device != null) && (!auth_state.password_enabled || auth_state.session_unlocked);
+
+    for (const dev of bonded_devices) {
+        const li = document.createElement("li");
+        li.className = "list-group-item d-flex justify-content-between align-items-center px-0";
+
+        const info = document.createElement("div");
+        const mac_span = document.createElement("span");
+        mac_span.className = "font-monospace me-2";
+        mac_span.innerText = format_ble_mac(dev.addr);
+        info.appendChild(mac_span);
+
+        const badge = document.createElement("span");
+        badge.className = dev.is_connected ? "badge bg-success" : "badge bg-secondary";
+        badge.innerText = dev.is_connected ? "Connected" : "Paired";
+        info.appendChild(badge);
+
+        const forget_btn = document.createElement("button");
+        forget_btn.type = "button";
+        forget_btn.className = "btn btn-sm btn-outline-danger";
+        forget_btn.innerText = "Forget";
+        forget_btn.disabled = !can_write;
+        forget_btn.addEventListener("click", () => unpair_single_device(dev));
+
+        li.appendChild(info);
+        li.appendChild(forget_btn);
+        list.appendChild(li);
+    }
+}
+
+async function unpair_single_device(dev) {
+    if (device == null || busy) {
+        return;
+    }
+    busy = true;
+    clear_error();
+    try {
+        const fields = [[UINT8, dev.addr_type], ...dev.addr.map(b => [UINT8, b])];
+        await send_feature_command(UNPAIR_DEVICE, fields);
+        setTimeout(load_bonded_devices, 400);
+    } catch (e) {
+        display_error(e);
+    }
+    busy = false;
+}
+
 
 function file_uploaded() {
     const reader = new FileReader();
@@ -1473,22 +1604,154 @@ function setup_examples() {
 function hid_on_disconnect(event) {
     if (event.device === device) {
         device = null;
+        auth_state = { password_enabled: false, session_unlocked: true };
+        update_auth_ui();
         device_buttons_set_disabled_state(true);
     }
 }
 
 function device_buttons_set_disabled_state(state) {
-    document.getElementById("load_from_device").disabled = state;
-    document.getElementById("save_to_device").disabled = state;
-    document.getElementById("flash_firmware").disabled = state;
-    document.getElementById("flash_b_side").disabled = state;
-    document.getElementById("pair_new_device").disabled = state;
-    document.getElementById("clear_bonds").disabled = state;
+    const is_connected = !state && (device != null);
+    const can_write = is_connected && (!auth_state.password_enabled || auth_state.session_unlocked);
+
+    document.getElementById("load_from_device").disabled = !is_connected;
+    document.getElementById("save_to_device").disabled = !can_write;
+    document.getElementById("flash_firmware").disabled = !can_write;
+    document.getElementById("flash_b_side").disabled = !can_write;
+    document.getElementById("pair_new_device").disabled = !can_write;
+    document.getElementById("clear_bonds").disabled = !can_write;
 }
+
+async function hash_password_16(password) {
+    const encoded = new TextEncoder().encode(password);
+    const digest = await crypto.subtle.digest('SHA-256', encoded);
+    return new Uint8Array(digest).slice(0, 16);
+}
+
+async function refresh_auth_status() {
+    if (device == null) {
+        return;
+    }
+    try {
+        await send_feature_command(GET_AUTH_STATUS);
+        const [pw_enabled, unlocked] = await read_config_feature([UINT8, UINT8]);
+        auth_state.password_enabled = (pw_enabled !== 0);
+        auth_state.session_unlocked = (unlocked !== 0);
+    } catch (e) {
+        // Fallback if connected to stock firmware without auth commands
+        auth_state = { password_enabled: false, session_unlocked: true };
+    }
+    update_auth_ui();
+    device_buttons_set_disabled_state(device == null);
+}
+
+function update_auth_ui() {
+    const banner = document.getElementById("auth_banner");
+    const pw_card = document.getElementById("password_protection_container");
+    const remove_btn = document.getElementById("remove_password_btn");
+
+    if (device == null) {
+        banner.classList.add("d-none");
+        pw_card.classList.add("d-none");
+        return;
+    }
+
+    const locked = auth_state.password_enabled && !auth_state.session_unlocked;
+    banner.classList.toggle("d-none", !locked);
+    pw_card.classList.toggle("d-none", locked);
+    remove_btn.classList.toggle("d-none", !auth_state.password_enabled);
+    
+    render_bonded_devices();
+}
+
+async function unlock_device() {
+    if (device == null || busy) {
+        return;
+    }
+    const input = document.getElementById("unlock_password_input");
+    const password = input.value;
+    if (!password) {
+        display_error("Please enter a password.");
+        return;
+    }
+
+    busy = true;
+    clear_error();
+    try {
+        const hash = await hash_password_16(password);
+        const fields = Array.from(hash).map(b => [UINT8, b]);
+        await send_feature_command(UNLOCK_SESSION, fields);
+        const [pw_enabled, unlocked] = await read_config_feature([UINT8, UINT8]);
+        auth_state.password_enabled = (pw_enabled !== 0);
+        auth_state.session_unlocked = (unlocked !== 0);
+        if (!auth_state.session_unlocked) {
+            display_error("Incorrect password.");
+        } else {
+            input.value = "";
+        }
+        update_auth_ui();
+        device_buttons_set_disabled_state(false);
+    } catch (e) {
+        display_error(e);
+    }
+    busy = false;
+}
+
+async function set_device_password() {
+    if (device == null || busy) {
+        return;
+    }
+    const input = document.getElementById("new_password_input");
+    const password = input.value;
+    if (!password) {
+        display_error("Password cannot be empty.");
+        return;
+    }
+
+    busy = true;
+    clear_error();
+    try {
+        const hash = await hash_password_16(password);
+        const fields = [[UINT8, 1], ...Array.from(hash).map(b => [UINT8, b])];
+        await send_feature_command(SET_PASSWORD, fields);
+        const [pw_enabled, unlocked] = await read_config_feature([UINT8, UINT8]);
+        auth_state.password_enabled = (pw_enabled !== 0);
+        auth_state.session_unlocked = (unlocked !== 0);
+        input.value = "";
+        update_auth_ui();
+        device_buttons_set_disabled_state(false);
+    } catch (e) {
+        display_error(e);
+    }
+    busy = false;
+}
+
+async function remove_device_password() {
+    if (device == null || busy) {
+        return;
+    }
+
+    busy = true;
+    clear_error();
+    try {
+        const fields = [[UINT8, 0], ...new Array(16).fill(0).map(() => [UINT8, 0])];
+        await send_feature_command(SET_PASSWORD, fields);
+        const [pw_enabled, unlocked] = await read_config_feature([UINT8, UINT8]);
+        auth_state.password_enabled = (pw_enabled !== 0);
+        auth_state.session_unlocked = (unlocked !== 0);
+        update_auth_ui();
+        device_buttons_set_disabled_state(false);
+    } catch (e) {
+        display_error(e);
+    }
+    busy = false;
+}
+
 
 function bluetooth_buttons_set_visibility(visible) {
     document.getElementById("pair_new_device_container").classList.toggle("d-none", !visible);
     document.getElementById("clear_bonds_container").classList.toggle("d-none", !visible);
+    document.getElementById("bonded_devices_container").classList.toggle("d-none", !visible);
     document.getElementById("flash_b_side_container").classList.toggle("d-none", visible);
 }
 

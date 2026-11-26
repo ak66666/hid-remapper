@@ -34,6 +34,15 @@
 
         <div id="error" class="alert alert-danger d-none"></div>
 
+        <div id="auth_banner" class="alert alert-warning d-flex align-items-center justify-content-between d-none">
+            <span id="auth_status_text">Read-only mode: Device configuration is password protected.</span>
+            <div class="d-flex gap-2">
+                <input type="password" id="unlock_password_input" class="form-control form-control-sm" placeholder="Password" style="max-width: 180px;">
+                <button id="unlock_device" type="button" class="btn btn-sm btn-warning">Unlock</button>
+            </div>
+        </div>
+
+
         <div class="nav nav-tabs" id="nav-tab" role="tablist">
             <button class="nav-link active" id="nav-mappings-tab" data-bs-toggle="tab" data-bs-target="#nav-mappings" type="button" role="tab">Mappings</button>
             <button class="nav-link" id="nav-settings-tab" data-bs-toggle="tab" data-bs-target="#nav-settings" type="button" role="tab">Settings</button>
@@ -293,6 +302,37 @@
                     </div>
                     <div class="col-4 d-none" id="clear_bonds_container">
                         <button id="clear_bonds" type="button" class="btn btn-primary w-100">Forget all devices</button>
+                    </div>
+                </div>
+
+                 <div id="bonded_devices_container" class="card mt-4 d-none">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 class="card-title mb-0">Paired Bluetooth devices</h5>
+                            <button id="refresh_bonded_devices" type="button" class="btn btn-sm btn-outline-secondary">Refresh</button>
+                        </div>
+                        <p id="bonded_devices_empty" class="text-muted small mb-0">No paired Bluetooth devices.</p>
+                        <ul id="bonded_devices_list" class="list-group list-group-flush"></ul>
+                    </div>
+                </div>
+
+                <div id="password_protection_container" class="card mt-4 d-none">
+                    <div class="card-body">
+                        <h5 class="card-title">Password protection</h5>
+                        <p class="card-text text-muted small mb-3">
+                            When enabled, viewing mappings and connected devices remains open, but saving changes, managing Bluetooth pairings, and flashing firmware require unlocking first.
+                        </p>
+                        <div class="row g-2 align-items-center">
+                            <div class="col-auto">
+                                <input type="password" id="new_password_input" class="form-control" placeholder="New password">
+                            </div>
+                            <div class="col-auto">
+                                <button id="set_password_btn" type="button" class="btn btn-primary">Set / Update password</button>
+                            </div>
+                            <div class="col-auto">
+                                <button id="remove_password_btn" type="button" class="btn btn-outline-danger d-none">Remove password</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

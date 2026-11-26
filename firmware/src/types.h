@@ -1,4 +1,4 @@
-#ifndef _TYPES_H_
+ #ifndef _TYPES_H_
 #define _TYPES_H_
 
 #include <stdint.h>
@@ -32,6 +32,11 @@ enum class ConfigCommand : int8_t {
     CLEAR_QUIRKS = 23,
     ADD_QUIRK = 24,
     GET_QUIRK = 25,
+    GET_AUTH_STATUS = 26,
+    UNLOCK_SESSION = 27,
+    SET_PASSWORD = 28,
+    GET_BONDED_DEVICES = 29,
+    UNPAIR_DEVICE = 30,
 };
 
 struct usage_def_t {
@@ -409,6 +414,7 @@ enum class PersistConfigReturnCode : int8_t {
     UNKNOWN = 0,
     SUCCESS = 1,
     CONFIG_TOO_BIG = 2,
+    UNAUTHORIZED = 3,
 };
 
 struct __attribute__((packed)) persist_config_response_t {
@@ -432,6 +438,40 @@ struct __attribute__((packed)) monitor_report_t {
 
 struct __attribute__((packed)) uint16_val_t {
     uint16_t val;
+};
+
+#define PASSWORD_HASH_LEN 16
+
+struct __attribute__((packed)) auth_status_response_t {
+    uint8_t password_enabled;
+    uint8_t session_unlocked;
+};
+
+struct __attribute__((packed)) unlock_session_t {
+    uint8_t hash[PASSWORD_HASH_LEN];
+};
+
+struct __attribute__((packed)) set_password_t {
+    uint8_t enabled;
+    uint8_t hash[PASSWORD_HASH_LEN];
+};
+
+struct __attribute__((packed)) persisted_auth_t {
+    uint8_t enabled;
+    uint8_t hash[PASSWORD_HASH_LEN];
+};
+
+struct __attribute__((packed)) bonded_device_response_t {
+    uint8_t total_count;
+    uint8_t index;
+    uint8_t addr_type;
+    uint8_t addr[6];
+    uint8_t is_connected;
+};
+
+struct __attribute__((packed)) unpair_device_t {
+    uint8_t addr_type;
+    uint8_t addr[6];
 };
 
 #endif

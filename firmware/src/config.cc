@@ -22,6 +22,50 @@ const uint8_t CONFIG_FLAG_NORMALIZE_GAMEPAD_INPUTS_BIT = 6;
 ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
 uint32_t requested_index = 0;
 uint32_t requested_secondary_index = 0;
+static bool auth_password_enabled = false;
+static uint8_t auth_password_hash[PASSWORD_HASH_LEN] = { 0 };
+static bool auth_session_unlocked = false;
+
+bool is_config_authorized() {
+    return !auth_password_enabled || auth_session_unlocked;
+}
+
+void reset_auth_session() {
+    auth_session_unlocked = false;
+}
+
+void load_auth_config(const uint8_t* data, size_t len) {
+    if (len == sizeof(persisted_auth_t)) {
+        const persisted_auth_t* auth = (const persisted_auth_t*) data;
+        auth_password_enabled = (auth->enabled != 0);
+        memcpy(auth_password_hash, auth->hash, PASSWORD_HASH_LEN);
+        auth_session_unlocked = false;
+    }
+}
+
+__attribute__((weak)) void do_persist_auth(const uint8_t* buffer, size_t len) {
+    (void) buffer;
+    (void) len;
+}
+
+__attribute__((weak)) void get_bonded_device_info(uint32_t index, bonded_device_response_t* out) {
+    (void) index;
+    memset(out, 0, sizeof(bonded_device_response_t));
+}
+
+__attribute__((weak)) void unpair_single_device(uint8_t addr_type, const uint8_t addr[6]) {
+    (void) addr_type;
+    (void) addr;
+}
+
+
+static bool verify_password_hash(const uint8_t* candidate) {
+    uint8_t diff = 0;
+    for (size_t i = 0; i < PASSWORD_HASH_LEN; i++) {
+        diff |= candidate[i] ^ auth_password_hash[i];
+    }
+    return diff == 0;
+}
 
 bool checksum_ok(const uint8_t* buffer, uint16_t data_size) {
     return crc32(buffer, data_size - 4) == ((crc32_t*) (buffer + data_size - 4))->crc32;
@@ -943,6 +987,35 @@ uint16_t handle_get_report1(uint8_t report_id, uint8_t* buffer, uint16_t reqlen)
                 returned->return_code = persist_config_return_code;
                 break;
             }
+            case ConfigCommand::GET_AUTH_STATUS: {
+                auth_status_response_t* returned = (auth_status_response_t*) config_buffer;
+                returned->password_enabled = auth_password_enabled ? 1 : 0;
+                returned->session_unlocked = auth_session_unlocked ? 1 : 0;
+                break;
+            }
+            case ConfigCommand::GET_BONDED_DEVICES: {
+                bonded_device_response_t* returned = (bonded_device_response_t*) config_buffer;
+                get_bonded_device_info(requested_index, returned);
+                break;
+            }
+            case ConfigCommand::GET_MAPPING:
+            case ConfigCommand::GET_OUR_USAGES:
+            case ConfigCommand::GET_THEIR_USAGES:
+            case ConfigCommand::GET_QUIRK:
+            case ConfigCommand::GET_BONDED_DEVICES: {
+                get_indexed_t* get_indexed = (get_indexed_t*) config_buffer->data;
+                requested_index = get_indexed->requested_index;
+                break;
+            }
+            case ConfigCommand::UNPAIR_DEVICE: {
+                if (!is_config_authorized()) {
+                    last_config_command = ConfigCommand::INVALID_COMMAND;
+                    break;
+                }
+                unpair_device_t* req = (unpair_device_t*) config_buffer->data;
+                unpair_single_device(req->addr_type, req->addr);
+                break;
+            }
             default:
                 return 0;
         }
@@ -961,11 +1034,54 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
             last_config_command = config_buffer->command;
             switch (config_buffer->command) {
                 case ConfigCommand::NO_COMMAND:
+                case ConfigCommand::GET_CONFIG:
+                case ConfigCommand::GET_AUTH_STATUS:
                     break;
+                case ConfigCommand::UNLOCK_SESSION: {
+                    unlock_session_t* req = (unlock_session_t*) config_buffer->data;
+                    if (!auth_password_enabled || verify_password_hash(req->hash)) {
+                        auth_session_unlocked = true;
+                    } else {
+                        auth_session_unlocked = false;
+                    }
+                    last_config_command = ConfigCommand::GET_AUTH_STATUS;
+                    break;
+                }
+                case ConfigCommand::SET_PASSWORD: {
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
+                    set_password_t* req = (set_password_t*) config_buffer->data;
+                    persisted_auth_t persisted = { 0 };
+                    if (req->enabled) {
+                        auth_password_enabled = true;
+                        memcpy(auth_password_hash, req->hash, PASSWORD_HASH_LEN);
+                        auth_session_unlocked = true;
+                        persisted.enabled = 1;
+                        memcpy(persisted.hash, req->hash, PASSWORD_HASH_LEN);
+                    } else {
+                        auth_password_enabled = false;
+                        memset(auth_password_hash, 0, PASSWORD_HASH_LEN);
+                        auth_session_unlocked = false;
+                        persisted.enabled = 0;
+                    }
+                    do_persist_auth((const uint8_t*) &persisted, sizeof(persisted));
+                    last_config_command = ConfigCommand::GET_AUTH_STATUS;
+                    break;
+                }
                 case ConfigCommand::RESET_INTO_BOOTSEL:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     reset_to_bootloader();
                     break;
                 case ConfigCommand::SET_CONFIG: {
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     set_config_t* config = (set_config_t*) config_buffer->data;
                     unmapped_passthrough_layer_mask = config->unmapped_passthrough_layer_mask;
                     ignore_auth_dev_inputs = config->flags & (1 << CONFIG_FLAG_IGNORE_AUTH_DEV_INPUTS_BIT);
@@ -986,12 +1102,18 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     macro_entry_duration = config->macro_entry_duration;
                     break;
                 }
-                case ConfigCommand::GET_CONFIG:
-                    break;
                 case ConfigCommand::CLEAR_MAPPING:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     config_mappings.clear();
                     break;
                 case ConfigCommand::ADD_MAPPING: {
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     mapping_config11_t* mapping_config = (mapping_config11_t*) config_buffer->data;
                     config_mappings.push_back(*mapping_config);
                     break;
@@ -1005,27 +1127,55 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     break;
                 }
                 case ConfigCommand::PERSIST_CONFIG:
+                    if (!is_config_authorized()) {
+                        persist_config_return_code = PersistConfigReturnCode::UNAUTHORIZED;
+                        break;
+                    }
                     need_to_persist_config = true;
                     persist_config_return_code = PersistConfigReturnCode::UNKNOWN;
                     break;
                 case ConfigCommand::SUSPEND:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     suspended = true;
                     break;
                 case ConfigCommand::RESUME:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     resume_pending = true;
                     config_updated = true;
                     reset_state();
                     break;
                 case ConfigCommand::PAIR_NEW_DEVICE:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     pair_new_device();
                     break;
                 case ConfigCommand::CLEAR_BONDS:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     clear_bonds();
                     break;
                 case ConfigCommand::FLASH_B_SIDE:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     flash_b_side();
                     break;
                 case ConfigCommand::CLEAR_MACROS:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     my_mutex_enter(MutexId::MACROS);
                     for (int i = 0; i < NMACROS; i++) {
                         macros[i].clear();
@@ -1033,6 +1183,10 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     my_mutex_exit(MutexId::MACROS);
                     break;
                 case ConfigCommand::APPEND_TO_MACRO: {
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     append_to_macro_t* append_to_macro = (append_to_macro_t*) config_buffer->data;
                     my_mutex_enter(MutexId::MACROS);
                     if (macros[append_to_macro->macro].empty()) {
@@ -1055,6 +1209,10 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     break;
                 }
                 case ConfigCommand::CLEAR_EXPRESSIONS:
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     my_mutex_enter(MutexId::EXPRESSIONS);
                     for (int i = 0; i < NEXPRESSIONS; i++) {
                         expressions[i].clear();
@@ -1062,6 +1220,10 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     my_mutex_exit(MutexId::EXPRESSIONS);
                     break;
                 case ConfigCommand::APPEND_TO_EXPRESSION: {
+                    if (!is_config_authorized()) {
+                        last_config_command = ConfigCommand::INVALID_COMMAND;
+                        break;
+                    }
                     append_to_expr_t* append_to_expr = (append_to_expr_t*) config_buffer->data;
                     if (append_to_expr->expr >= NEXPRESSIONS) {
                         break;
@@ -1069,55 +1231,62 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     my_mutex_enter(MutexId::EXPRESSIONS);
                     uint8_t* ptr = append_to_expr->elem_data;
                     for (int i = 0; i < append_to_expr->nelems; i++) {
-                        if (ptr > append_to_expr->elem_data + sizeof(append_to_expr->elem_data) - 1) {
-                            break;
-                        }
-                        Op op = (Op) *ptr;
-                        ptr++;
-                        if ((op == Op::PUSH) || (op == Op::PUSH_USAGE)) {
-                            if (ptr > append_to_expr->elem_data + sizeof(append_to_expr->elem_data) - sizeof(uint32_t)) {
-                                break;
-                            }
-                            uint32_t val = ((expr_val_t*) ptr)->val;
-                            ptr += sizeof(expr_val_t);
-                            expressions[append_to_expr->expr].push_back((expr_elem_t){
-                                .op = op,
-                                .val = val });
-                        } else {
-                            expressions[append_to_expr->expr].push_back((expr_elem_t){ .op = op });
-                        }
-                    }
-                    my_mutex_exit(MutexId::EXPRESSIONS);
-                    break;
-                }
-                case ConfigCommand::GET_EXPRESSION: {
-                    get_expr_t* get_expr = (get_expr_t*) config_buffer->data;
-                    requested_index = get_expr->requested_expr;
-                    requested_secondary_index = get_expr->requested_expr_elem;
-                    break;
-                }
-                case ConfigCommand::SET_MONITOR_ENABLED: {
-                    monitor_t* monitor = (monitor_t*) config_buffer->data;
-                    set_monitor_enabled(monitor->enabled);
-                    break;
-                }
-                case ConfigCommand::CLEAR_QUIRKS:
-                    my_mutex_enter(MutexId::QUIRKS);
-                    quirks.clear();
-                    my_mutex_exit(MutexId::QUIRKS);
-                    break;
-                case ConfigCommand::ADD_QUIRK: {
-                    quirk_t* quirk = (quirk_t*) config_buffer->data;
-                    my_mutex_enter(MutexId::QUIRKS);
-                    quirks.push_back(*quirk);
-                    my_mutex_exit(MutexId::QUIRKS);
-                    break;
-                }
-                default:
-                    last_config_command = ConfigCommand::INVALID_COMMAND;
-                    break;
-            }
-        } else {
+			if (ptr > append_to_expr->elem_data + sizeof(append_to_expr->elem_data) - 1) {
+			break;
+			}
+			Op op = (Op) ptr;
+			ptr++;
+			if ((op == Op::PUSH) || (op == Op::PUSH_USAGE)) {
+if (ptr > append_to_expr->elem_data + sizeof(append_to_expr->elem_data) - sizeof(uint32_t)) {
+break;
+}
+uint32_t val = ((expr_val_t) ptr)->val;
+ptr += sizeof(expr_val_t);
+expressions[append_to_expr->expr].push_back((expr_elem_t){
+.op = op,
+.val = val });
+} else {
+expressions[append_to_expr->expr].push_back((expr_elem_t){ .op = op });
+}
+}
+my_mutex_exit(MutexId::EXPRESSIONS);
+break;
+}
+case ConfigCommand::GET_EXPRESSION: {
+get_expr_t* get_expr = (get_expr_t*) config_buffer->data;
+requested_index = get_expr->requested_expr;
+ requested_secondary_index = get_expr->requested_expr_elem;
+break;
+}
+case ConfigCommand::SET_MONITOR_ENABLED: {
+monitor_t* monitor = (monitor_t*) config_buffer->data;
+set_monitor_enabled(monitor->enabled);
+break;
+}
+case ConfigCommand::CLEAR_QUIRKS:
+if (!is_config_authorized()) {
+last_config_command = ConfigCommand::INVALID_COMMAND;
+break;
+}
+my_mutex_enter(MutexId::QUIRKS);
+quirks.clear();
+my_mutex_exit(MutexId::QUIRKS);
+break;
+case ConfigCommand::ADD_QUIRK: {
+if (!is_config_authorized()) {
+last_config_command = ConfigCommand::INVALID_COMMAND;
+break;
+}
+quirk_t* quirk = (quirk_t*) config_buffer->data;
+my_mutex_enter(MutexId::QUIRKS);
+quirks.push_back(*quirk);
+my_mutex_exit(MutexId::QUIRKS);
+break;
+}
+default:
+last_config_command = ConfigCommand::INVALID_COMMAND;
+break;
+}        } else {
             last_config_command = ConfigCommand::INVALID_COMMAND;
         }
     }

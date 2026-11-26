@@ -569,11 +569,16 @@ static void gatt_discover(struct bt_conn* conn) {
 
 static int64_t button_pressed_at;
 
+
 static void button_cb(const struct device* dev, struct gpio_callback* cb, uint32_t pins) {
     int button_state = gpio_pin_get(dev, button.pin);
     if (button_state) {
         button_pressed_at = k_uptime_get();
     } else {
+        if (!is_config_authorized()) {
+            LOG_WRN("Ignoring button press while configuration is password-locked");
+            return;
+        }
         if (k_uptime_get() - button_pressed_at > CLEAR_BONDS_BUTTON_PRESS_MS) {
             clear_bonds();
         } else {
@@ -581,6 +586,7 @@ static void button_cb(const struct device* dev, struct gpio_callback* cb, uint32
         }
     }
 }
+
 
 static void connected(struct bt_conn* conn, uint8_t conn_err) {
     char addr[BT_ADDR_LE_STR_LEN];
@@ -1004,6 +1010,7 @@ static void enable_usb(struct usbd_context* const ctx) {
     }
 }
 
+
 static void usbd_msg_cb(struct usbd_context* const ctx, const struct usbd_msg* msg) {
     switch (msg->type) {
         case USBD_MSG_VBUS_READY:
@@ -1012,12 +1019,14 @@ static void usbd_msg_cb(struct usbd_context* const ctx, const struct usbd_msg* m
             break;
         case USBD_MSG_VBUS_REMOVED:
             LOG_INF("VBUS removed");
+            reset_auth_session();
             CHK(usbd_disable(ctx));
             break;
         default:
             break;
     }
 }
+
 
 static void descriptor_init() {
     our_descriptor = &our_descriptors[our_descriptor_number];
@@ -1094,8 +1103,23 @@ static void bt_init() {
     CHK(bt_enable(NULL));
 }
 
+
+
 static int remapper_settings_set(const char* name, size_t len, settings_read_cb read_cb, void* cb_arg) {
-    LOG_INF("len=%d", len);
+    LOG_INF("name=%s, len=%d", name ? name : "null", len);
+
+    if (name && strcmp(name, "auth") == 0) {
+        static uint8_t auth_buf[sizeof(persisted_auth_t)];
+        if (len != sizeof(persisted_auth_t)) {
+            return -EINVAL;
+        }
+        int bytes_read = read_cb(cb_arg, auth_buf, len);
+        if (bytes_read != sizeof(persisted_auth_t)) {
+            return bytes_read < 0 ? bytes_read : -EINVAL;
+        }
+        load_auth_config(auth_buf, len);
+        return 0;
+    }
 
     static uint8_t buffer[PERSISTED_CONFIG_SIZE];
 
@@ -1113,12 +1137,11 @@ static int remapper_settings_set(const char* name, size_t len, settings_read_cb 
         return -EINVAL;
     }
 
-    //    LOG_HEXDUMP_DBG(buffer, len, "");
-
     load_config(buffer);
 
     return 0;
 }
+
 
 static struct settings_handler our_settings_handlers = {
     .name = "remapper",
@@ -1129,6 +1152,12 @@ void do_persist_config(uint8_t* buffer) {
     LOG_INF("");
     CHK(settings_save_one("remapper/config", buffer, PERSISTED_CONFIG_SIZE));
 }
+
+void do_persist_auth(const uint8_t* buffer, size_t len) {
+    LOG_INF("");
+    CHK(settings_save_one("remapper/auth", buffer, len));
+
+
 
 void reset_to_bootloader() {
 #if defined(CONFIG_BUILD_OUTPUT_UF2) && defined(CONFIG_RETAINED_MEM_NRF_GPREGRET)
