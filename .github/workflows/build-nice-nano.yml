@@ -41,10 +41,16 @@ jobs:
             firmware-bluetooth/.west
           key: nrf-sdk-${{ hashFiles('firmware-bluetooth/build.sh') }}
 
-      - name: Install Zephyr SDK 1.0 if missing
+      - name: Install Zephyr SDK 1.0.0 if missing
         run: |
           if [ ! -d "/opt/toolchains/zephyr-sdk-1.0.0" ]; then
-            west sdk install --version 1.0.0 -d /opt/toolchains/zephyr-sdk-1.0.0 -t arm-zephyr-eabi
+            mkdir -p /opt/toolchains
+            cd /opt/toolchains
+            wget -q https://github.com
+            tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
+            rm zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
+            cd zephyr-sdk-1.0.0
+            ./setup.sh -t arm-zephyr-eabi -h -c
           fi
 
       - name: Build nice!nano firmware
