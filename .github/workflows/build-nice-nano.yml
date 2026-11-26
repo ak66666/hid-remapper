@@ -46,12 +46,33 @@ jobs:
           set -e
           if [ ! -d "/opt/toolchains/zephyr-sdk-1.0.0" ]; then
             mkdir -p /opt/toolchains
-            cd /opt/toolchains
-            python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com', 'sdk.tar.xz')"
-            tar xf sdk.tar.xz && rm sdk.tar.xz
-            cd zephyr-sdk-1.0.0
-            python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com', 'arm.tar.xz')"
-            tar xf arm.tar.xz && rm arm.tar.xz
+            python3 - << 'EOF'
+          import json, os, subprocess, urllib.request
+
+          req = urllib.request.Request(
+              "https://github.com",
+              headers={"User-Agent": "gh-actions"}
+          )
+          release = json.loads(urllib.request.urlopen(req).read().decode())
+          assets = {a["name"]: a["browser_download_url"] for a in release["assets"]}
+
+          def download_and_extract(prefix, dest_dir):
+              match = next((name for name in assets if name.startswith(prefix) and "linux-x86_64" in name and not name.endswith(".sha256")), None)
+              if not match:
+                  raise RuntimeError(f"Asset not found for {prefix}. Available: {list(assets.keys())}")
+              print(f"Downloading {match}...")
+              archive = os.path.join("/opt/toolchains", match)
+              urllib.request.urlretrieve(assets[match], archive)
+              if match.endswith(".7z"):
+                  subprocess.run(["7z", "x", archive, f"-o{dest_dir}", "-y"], check=True)
+              else:
+                  subprocess.run(["tar", "xf", archive, "-C", dest_dir], check=True)
+              os.remove(archive)
+
+          download_and_extract("zephyr-sdk-1.0.0_linux-x86_64_minimal", "/opt/toolchains")
+          download_and_extract("toolchain_linux-x86_64_arm-zephyr-eabi", "/opt/toolchains/zephyr-sdk-1.0.0")
+          EOF
+            cd /opt/toolchains/zephyr-sdk-1.0.0
             ./setup.sh -h -c
           fi
 
