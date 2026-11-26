@@ -27,6 +27,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache Zephyr SDK 1.0
+        uses: actions/cache@v4
+        with:
+          path: /opt/toolchains
+          key: zephyr-sdk-1.0.0
+
       - name: Cache nRF Connect SDK
         uses: actions/cache@v4
         with:
@@ -35,8 +41,16 @@ jobs:
             firmware-bluetooth/.west
           key: nrf-sdk-${{ hashFiles('firmware-bluetooth/build.sh') }}
 
+      - name: Install Zephyr SDK 1.0 if missing
+        run: |
+          if [ ! -d "/opt/toolchains/zephyr-sdk-1.0.0" ]; then
+            west sdk install --version 1.0.0 -d /opt/toolchains/zephyr-sdk-1.0.0 -t arm-zephyr-eabi
+          fi
+
       - name: Build nice!nano firmware
         working-directory: firmware-bluetooth
+        env:
+          ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-1.0.0
         run: ./build.sh nice_nano
 
       - name: Upload nice!nano UF2 artifact
