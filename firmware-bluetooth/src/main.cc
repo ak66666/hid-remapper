@@ -742,10 +742,13 @@ static struct descriptor_type their_descriptor;
 static void hogp_map_read_cb(struct bt_hogp* hogp, uint8_t err, const uint8_t* data, size_t size, size_t offset) {
     if (data == NULL) {
         their_descriptor.size = offset;
-        //their_descriptor.conn_idx = hogp_index(hogp);
-	their_descriptor.interface = hogp_index(hogp) << 8; their_descriptor.hub_port = 0;
-        their_descriptor.vid = device_vid[their_descriptor.conn_idx];
-        their_descriptor.pid = device_pid[their_descriptor.conn_idx];
+
+	uint8_t conn_idx = hogp_index(hogp);
+	their_descriptor.interface = conn_idx << 8;
+	their_descriptor.hub_port = 0;
+	their_descriptor.vid = device_vid[conn_idx];
+	their_descriptor.pid = device_pid[conn_idx];
+
         CHK(k_msgq_put(&descriptor_q, &their_descriptor, K_NO_WAIT));
         return;
     }
@@ -1551,7 +1554,7 @@ int main() {
         }
 
         while (!k_msgq_get(&disconnected_q, &disconnected_item, K_NO_WAIT)) {
-            LOG_INF("device_disconnected_callback conn_idx=%d", disconnected_item.conn_idx);
+	    LOG_INF("device_disconnected_callback interface=0x%04x", disconnected_item.interface);
             device_disconnected_callback(disconnected_item.interface);
         }
 
