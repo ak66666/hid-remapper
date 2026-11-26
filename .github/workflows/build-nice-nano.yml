@@ -47,12 +47,12 @@ jobs:
           if [ ! -d "/opt/toolchains/zephyr-sdk-1.0.0" ]; then
             mkdir -p /opt/toolchains
             cd /opt/toolchains
-            curl -fSL -o zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz \
-              https://github.com
-            tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
-            rm zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
+            python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com', 'sdk.tar.xz')"
+            tar xf sdk.tar.xz && rm sdk.tar.xz
             cd zephyr-sdk-1.0.0
-            ./setup.sh -t arm-zephyr-eabi -h -c
+            python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com', 'arm.tar.xz')"
+            tar xf arm.tar.xz && rm arm.tar.xz
+            ./setup.sh -h -c
           fi
 
       - name: Build nice!nano firmware
