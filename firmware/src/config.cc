@@ -998,15 +998,6 @@ uint16_t handle_get_report1(uint8_t report_id, uint8_t* buffer, uint16_t reqlen)
                 get_bonded_device_info(requested_index, returned);
                 break;
             }
-            case ConfigCommand::GET_MAPPING:
-            case ConfigCommand::GET_OUR_USAGES:
-            case ConfigCommand::GET_THEIR_USAGES:
-            case ConfigCommand::GET_QUIRK:
-            case ConfigCommand::GET_BONDED_DEVICES: {
-                get_indexed_t* get_indexed = (get_indexed_t*) config_buffer->data;
-                requested_index = get_indexed->requested_index;
-                break;
-            }
             case ConfigCommand::UNPAIR_DEVICE: {
                 if (!is_config_authorized()) {
                     last_config_command = ConfigCommand::INVALID_COMMAND;
@@ -1234,13 +1225,13 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
 			if (ptr > append_to_expr->elem_data + sizeof(append_to_expr->elem_data) - 1) {
 			break;
 			}
-			Op op = (Op) ptr;
+			Op op = (Op) *ptr;
 			ptr++;
 			if ((op == Op::PUSH) || (op == Op::PUSH_USAGE)) {
 if (ptr > append_to_expr->elem_data + sizeof(append_to_expr->elem_data) - sizeof(uint32_t)) {
 break;
 }
-uint32_t val = ((expr_val_t) ptr)->val;
+uint32_t val = ((expr_val_t*) ptr)->val;
 ptr += sizeof(expr_val_t);
 expressions[append_to_expr->expr].push_back((expr_elem_t){
 .op = op,
