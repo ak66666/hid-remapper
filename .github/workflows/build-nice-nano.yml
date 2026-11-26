@@ -43,10 +43,12 @@ jobs:
 
       - name: Install Zephyr SDK 1.0.0 if missing
         run: |
+          set -e
           if [ ! -d "/opt/toolchains/zephyr-sdk-1.0.0" ]; then
             mkdir -p /opt/toolchains
             cd /opt/toolchains
-            wget -q https://github.com
+            curl -fSL -o zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz \
+              https://github.com
             tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
             rm zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
             cd zephyr-sdk-1.0.0
