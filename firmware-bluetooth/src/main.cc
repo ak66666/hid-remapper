@@ -1156,7 +1156,7 @@ void do_persist_config(uint8_t* buffer) {
 void do_persist_auth(const uint8_t* buffer, size_t len) {
     LOG_INF("");
     CHK(settings_save_one("remapper/auth", buffer, len));
-
+}
 
 
 void reset_to_bootloader() {
