@@ -1,4 +1,4 @@
- import crc32 from './crc.js';
+  import crc32 from './crc.js';
 import usages from './usages.js';
 import examples from './examples.js';
 
@@ -240,7 +240,9 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("refresh_bonded_devices").addEventListener("click", load_bonded_devices);
 
     if ("hid" in navigator) {
+        navigator.hid.addEventListener('connect', hid_on_connect);
         navigator.hid.addEventListener('disconnect', hid_on_disconnect);
+        auto_connect_device();
     } else {
         display_error("Your browser doesn't support WebHID. Try Chrome (desktop version) or a Chrome-based browser.");
     }
@@ -253,39 +255,36 @@ document.addEventListener("DOMContentLoaded", function () {
     set_ui_state();
 });
 
-async function open_device() {
-    if (busy) {
-        return;
+async function connect_to_hid_device(config_interface) {
+    if (busy || config_interface === undefined) {
+        return false;
     }
     busy = true;
-
     clear_error();
     let success = false;
 
     try {
-        const devices = await navigator.hid.requestDevice({
-            filters: [{ usagePage: 0xFF00, usage: 0x0020 }]
-        });
-        const config_interface = devices?.find(d => d.collections.some(c => c.usagePage == 0xff00));
-        if (config_interface !== undefined) {
-            device = config_interface;
-            if (!device.opened) {
-                await device.open().catch((err) => { display_error(err + "\nIf you're on Linux, you might need to give yourself permissions to the appropriate /dev/hidraw* device."); });
-            }
-            success = device.opened;
-            success &&= await check_device_version();
-            if (success) {
-                device.addEventListener('inputreport', input_report_received);
-                await set_monitor_enabled(monitor_enabled);
-                await get_usages_from_device();
-                setup_usages_modals();
+        device = config_interface;
+        if (!device.opened) {
+            await device.open().catch((err) => {
+                display_error(err + "\nIf you're on Linux, you might need to give yourself permissions to the appropriate /dev/hidraw* device.");
+            });
+        }
+        success = device.opened;
+        success &&= await check_device_version();
+        if (success) {
+            device.removeEventListener('inputreport', input_report_received);
+            device.addEventListener('inputreport', input_report_received);
+            await set_monitor_enabled(monitor_enabled);
+            await get_usages_from_device();
+            setup_usages_modals();
 
-                const is_bt = device.productName.includes("Bluetooth");
-                bluetooth_buttons_set_visibility(is_bt);
-                await refresh_auth_status();
-                if (is_bt) {
-                    await load_bonded_devices();
-                }
+            const is_bt = device.productName.includes("Bluetooth");
+            bluetooth_buttons_set_visibility(is_bt);
+            await refresh_auth_status();
+            busy = false;
+            if (is_bt) {
+                await load_bonded_devices();
             }
         }
     } catch (e) {
@@ -299,6 +298,48 @@ async function open_device() {
     }
 
     busy = false;
+    return success;
+}
+
+async function open_device() {
+    if (busy) {
+        return;
+    }
+    try {
+        const devices = await navigator.hid.requestDevice({
+            filters: [{ usagePage: 0xFF00, usage: 0x0020 }]
+        });
+        const config_interface = devices?.find(d => d.collections.some(c => c.usagePage == 0xff00));
+        await connect_to_hid_device(config_interface);
+    } catch (e) {
+        display_error(e);
+    }
+}
+
+async function auto_connect_device() {
+    if (device != null || busy) {
+        return;
+    }
+    try {
+        const devices = await navigator.hid.getDevices();
+        const config_interface = devices.find(d =>
+            d.collections.some(c => c.usagePage == 0xff00 && c.usage == 0x0020)
+        );
+        if (config_interface !== undefined) {
+            await connect_to_hid_device(config_interface);
+        }
+    } catch (e) {
+        // Ignore silent auto-connect errors if device isn't ready yet
+    }
+}
+
+async function hid_on_connect(event) {
+    if (device != null) {
+        return;
+    }
+    if (event.device.collections.some(c => c.usagePage == 0xff00 && c.usage == 0x0020)) {
+        await connect_to_hid_device(event.device);
+    }
 }
 
 async function load_from_device() {
@@ -1605,11 +1646,14 @@ function setup_examples() {
 function hid_on_disconnect(event) {
     if (event.device === device) {
         device = null;
+        bonded_devices = [];
+        render_bonded_devices();
         auth_state = { password_enabled: false, session_unlocked: true };
         update_auth_ui();
         device_buttons_set_disabled_state(true);
     }
 }
+
 
 function device_buttons_set_disabled_state(state) {
     const is_connected = !state && (device != null);
