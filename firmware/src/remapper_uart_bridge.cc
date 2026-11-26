@@ -54,7 +54,12 @@ static void core1_main() {
     pio_cfg.pinout = PIO_USB_PINOUT_DPDM;
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
 
-    tuh_init(1);
+    tusb_rhport_init_t host_init = {
+        .role = TUSB_ROLE_HOST,
+        .speed = TUSB_SPEED_AUTO,
+    };
+    tusb_init(1, &host_init);
+
 
     // Register Port 2 (GP4/GP5) and Port 3 (GP6/GP7) as additional root host ports
     pio_usb_host_add_port(USB_PORT2_DP, PIO_USB_PINOUT_DPDM);
@@ -72,9 +77,9 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
 
     tuh_itf_info_t itf_info = { 0 };
     uint8_t hub_port = 1;
-    if (tuh_hid_itf_get_info(dev_addr, instance, &itf_info)) {
-        // Root ports 0, 1, 2 map to hub_port 1, 2, 3 (or downstream hub port if an external hub is attached)
-        hub_port = (itf_info.daddr_info.hub_port > 0) ? itf_info.daddr_info.hub_port : (itf_info.daddr_info.rhport + 1);
+    tuh_daddr_info_t daddr_info = { 0 };
+    if (tuh_dev_get_daddr_info(dev_addr, &daddr_info)) {
+        hub_port = (daddr_info.hub_port > 0) ? daddr_info.hub_port : (daddr_info.rhport + 1);
     }
 
     uint16_t iface = make_interface_id(dev_addr, instance);
