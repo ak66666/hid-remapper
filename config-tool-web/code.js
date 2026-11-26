@@ -1,4 +1,4 @@
- import crc32 from './crc.js';
+import crc32 from './crc.js';
 import usages from './usages.js';
 import examples from './examples.js';
 
@@ -890,12 +890,11 @@ async function flash_b_side() {
 
 async function pair_new_device() {
     await send_feature_command(PAIR_NEW_DEVICE);
-    setTimeout(load_bonded_devices, 1500);
 }
 
 async function clear_bonds() {
     await send_feature_command(CLEAR_BONDS);
-    setTimeout(load_bonded_devices, 500);
+    setTimeout(load_bonded_devices, 600);
 }
 
 function format_ble_mac(addr_bytes) {
@@ -907,15 +906,17 @@ function format_ble_mac(addr_bytes) {
 }
 
 async function load_bonded_devices() {
-    if (device == null) {
+    if (device == null || busy) {
         return;
     }
+    busy = true;
     try {
         bonded_devices = [];
         await send_feature_command(GET_BONDED_DEVICES, [[UINT32, 0]]);
         const first = await read_config_feature([UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8]);
         const total = first[0];
-        if (total > 0) {
+        // Ignore 0xFF (INVALID_COMMAND) if firmware doesn't support it
+        if (total > 0 && total <= 32) {
             bonded_devices.push({
                 index: first[1],
                 addr_type: first[2],
@@ -937,6 +938,7 @@ async function load_bonded_devices() {
     } catch (e) {
         display_error(e);
     }
+    busy = false;
 }
 
 function render_bonded_devices() {
@@ -984,7 +986,6 @@ async function unpair_single_device(dev) {
     if (device == null || busy) {
         return;
     }
-    busy = true;
     clear_error();
     try {
         const fields = [[UINT8, dev.addr_type], ...dev.addr.map(b => [UINT8, b])];
@@ -993,7 +994,6 @@ async function unpair_single_device(dev) {
     } catch (e) {
         display_error(e);
     }
-    busy = false;
 }
 
 

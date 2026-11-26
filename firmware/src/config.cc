@@ -998,15 +998,6 @@ uint16_t handle_get_report1(uint8_t report_id, uint8_t* buffer, uint16_t reqlen)
                 get_bonded_device_info(requested_index, returned);
                 break;
             }
-            case ConfigCommand::UNPAIR_DEVICE: {
-                if (!is_config_authorized()) {
-                    last_config_command = ConfigCommand::INVALID_COMMAND;
-                    break;
-                }
-                unpair_device_t* req = (unpair_device_t*) config_buffer->data;
-                unpair_single_device(req->addr_type, req->addr);
-                break;
-            }
             default:
                 return 0;
         }
@@ -1112,7 +1103,8 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                 case ConfigCommand::GET_MAPPING:
                 case ConfigCommand::GET_OUR_USAGES:
                 case ConfigCommand::GET_THEIR_USAGES:
-                case ConfigCommand::GET_QUIRK: {
+                case ConfigCommand::GET_QUIRK: 
+		case ConfigCommand::GET_BONDED_DEVICES: {
                     get_indexed_t* get_indexed = (get_indexed_t*) config_buffer->data;
                     requested_index = get_indexed->requested_index;
                     break;
@@ -1155,6 +1147,15 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     }
                     clear_bonds();
                     break;
+		case ConfigCommand::UNPAIR_DEVICE: {
+		    if (!is_config_authorized()) {
+		        last_config_command = ConfigCommand::INVALID_COMMAND;
+		        break;
+		    }
+		    unpair_device_t* req = (unpair_device_t*) config_buffer->data;
+		    unpair_single_device(req->addr_type, req->addr);
+		    break;
+		}
                 case ConfigCommand::FLASH_B_SIDE:
                     if (!is_config_authorized()) {
                         last_config_command = ConfigCommand::INVALID_COMMAND;

@@ -1187,6 +1187,71 @@ void clear_bonds() {
     k_work_submit(&clear_bonds_work);
 }
 
+struct bond_lookup_ctx {
+    uint32_t target_index;
+    uint32_t current_index;
+    bonded_device_response_t* out;
+};
+
+static void bond_lookup_cb(const struct bt_bond_info* info, void* user_data) {
+    struct bond_lookup_ctx* ctx = (struct bond_lookup_ctx*) user_data;
+    if (ctx->current_index == ctx->target_index) {
+        ctx->out->index = ctx->current_index;
+        ctx->out->addr_type = info->addr.type;
+        memcpy(ctx->out->addr, info->addr.a.val, 6);
+
+        struct bt_conn* conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &info->addr);
+        if (conn) {
+            ctx->out->is_connected = 1;
+            bt_conn_unref(conn);
+        } else {
+            ctx->out->is_connected = 0;
+        }
+    }
+    ctx->current_index++;
+    ctx->out->total_count = ctx->current_index;
+}
+
+void get_bonded_device_info(uint32_t index, bonded_device_response_t* out) {
+    memset(out, 0, sizeof(bonded_device_response_t));
+    out->index = index;
+    struct bond_lookup_ctx ctx = {
+        .target_index = index,
+        .current_index = 0,
+        .out = out,
+    };
+    bt_foreach_bond(BT_ID_DEFAULT, bond_lookup_cb, &ctx);
+}
+
+struct unpair_single_ctx {
+    bt_addr_le_t addr;
+};
+
+static void unpair_single_work_fn(struct k_work* work);
+static struct unpair_single_ctx pending_unpair_ctx;
+static K_WORK_DEFINE(unpair_single_work, unpair_single_work_fn);
+
+static void unpair_single_work_fn(struct k_work* work) {
+    struct bt_conn* conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, &pending_unpair_ctx.addr);
+    if (conn) {
+        CHK(bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN));
+        bt_conn_unref(conn);
+    }
+    if (CHK(bt_unpair(BT_ID_DEFAULT, &pending_unpair_ctx.addr))) {
+        char addr_str[BT_ADDR_LE_STR_LEN];
+        bt_addr_le_to_str(&pending_unpair_ctx.addr, addr_str, sizeof(addr_str));
+        LOG_INF("Unpaired %s", addr_str);
+    }
+    k_work_reschedule(&scan_start_work, K_MSEC(SCAN_DELAY_MS));
+}
+
+void unpair_single_device(uint8_t addr_type, const uint8_t addr[6]) {
+    pending_unpair_ctx.addr.type = addr_type;
+    memcpy(pending_unpair_ctx.addr.a.val, addr, 6);
+    k_work_submit(&unpair_single_work);
+}
+
+
 void my_mutexes_init() {
     for (int i = 0; i < (int8_t) MutexId::N; i++) {
         k_mutex_init(&mutexes[i]);
