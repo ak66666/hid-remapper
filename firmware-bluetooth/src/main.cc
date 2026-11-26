@@ -104,6 +104,13 @@ K_MSGQ_DEFINE(disconnected_q, sizeof(struct disconnected_type), CONFIG_BT_MAX_CO
 K_MSGQ_DEFINE(set_report_q, sizeof(struct set_report_type), 8, 4);
 ATOMIC_DEFINE(tick_pending, 1);
 
+ATOMIC_DEFINE(bonds_changed_pending, 1);
+
+static void notify_bonds_changed() {
+    atomic_set_bit(bonds_changed_pending, 0);
+}
+
+
 #define SW0_NODE DT_ALIAS(sw0)
 #if !DT_NODE_HAS_STATUS(SW0_NODE, okay)
 #error "Unsupported board: sw0 devicetree alias is not defined"
@@ -289,6 +296,7 @@ static void disconnect_conn(struct bt_conn* conn, void* data) {
 static void clear_bonds_work_fn(struct k_work* work) {
     if (CHK(bt_unpair(BT_ID_DEFAULT, &BT_ADDR_LE_ANY_))) {
         LOG_INF("Bonds cleared.");
+        notify_bonds_changed();
     } else {
         return;
     }
@@ -628,6 +636,7 @@ static void disconnected(struct bt_conn* conn, uint8_t reason) {
     CHK(k_msgq_put(&disconnected_q, &disconnected_item, K_NO_WAIT));
 
     count_connections();
+    notify_bonds_changed();
 
     k_work_reschedule(&scan_start_work, K_MSEC(SCAN_DELAY_MS));
 }
@@ -808,6 +817,7 @@ static void pairing_complete(struct bt_conn* conn, bool bonded) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("%s, bonded=%d", addr, bonded);
+    notify_bonds_changed();
 }
 
 static void pairing_failed(struct bt_conn* conn, enum bt_security_err reason) {
@@ -1241,6 +1251,7 @@ static void unpair_single_work_fn(struct k_work* work) {
         char addr_str[BT_ADDR_LE_STR_LEN];
         bt_addr_le_to_str(&pending_unpair_ctx.addr, addr_str, sizeof(addr_str));
         LOG_INF("Unpaired %s", addr_str);
+        notify_bonds_changed();
     }
     k_work_reschedule(&scan_start_work, K_MSEC(SCAN_DELAY_MS));
 }
@@ -1330,7 +1341,13 @@ int main() {
             }
         }
         if (!k_sem_take(&usb_sem1, K_NO_WAIT)) {
-            if (!send_monitor_report(do_send_report)) {
+          if (atomic_test_and_clear_bit(bonds_changed_pending, 0)) {
+             uint8_t notify_buf[2] = { REPORT_ID_BONDS_CHANGED, 1 };
+             if (!do_send_report(1, notify_buf, sizeof(notify_buf))) {
+                 atomic_set_bit(bonds_changed_pending, 0);
+                 k_sem_give(&usb_sem1);
+             }
+         } else if (!send_monitor_report(do_send_report)) {
                 k_sem_give(&usb_sem1);
             }
         }

@@ -713,6 +713,7 @@ const uint8_t config_report_descriptor[] = {
     0xA1, 0x01,               // Collection (Application)
     0x09, 0x21,               //   Usage (0x21)
     0x85, REPORT_ID_MONITOR,  //   Report ID (REPORT_ID_MONITOR)
+    0x85, REPORT_ID_BONDS_CHANGED, // Report ID (102)
     0x75, 0x08,               //   Report Size (8)
     0x95, 0x3F,               //   Report Count (63)
     0x81, 0x02,               //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)

@@ -1,9 +1,10 @@
-import crc32 from './crc.js';
+ import crc32 from './crc.js';
 import usages from './usages.js';
 import examples from './examples.js';
 
 const REPORT_ID_CONFIG = 100;
 const REPORT_ID_MONITOR = 101;
+const REPORT_ID_BONDS_CHANGED = 102;
 const STICKY_FLAG = 1 << 0;
 const TAP_FLAG = 1 << 1;
 const HOLD_FLAG = 1 << 2;
@@ -1882,6 +1883,10 @@ function validate_ui_expressions() {
 }
 
 function input_report_received(event) {
+    if (event.reportId == REPORT_ID_BONDS_CHANGED) {
+        load_bonded_devices();
+        return;
+    }
     if (event.reportId == REPORT_ID_MONITOR) {
         document.querySelectorAll('.monitor_row').forEach((element) => {
             element.classList.remove('bg-light');
