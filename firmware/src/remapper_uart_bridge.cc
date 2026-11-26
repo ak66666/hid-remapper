@@ -76,7 +76,10 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
     tuh_itf_info_t itf_info = { 0 };
-    uint8_t hub_port = 1;
+
+    uint8_t hub_port = dev_addr;
+    uint16_t iface = make_interface_id(dev_addr, instance);
+
     tuh_daddr_info_t daddr_info = { 0 };
     if (tuh_dev_get_daddr_info(dev_addr, &daddr_info)) {
         hub_port = (daddr_info.hub_port > 0) ? daddr_info.hub_port : (daddr_info.rhport + 1);
