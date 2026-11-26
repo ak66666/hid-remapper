@@ -27,12 +27,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache Zephyr SDK 1.0
-        uses: actions/cache@v4
-        with:
-          path: /opt/toolchains
-          key: zephyr-sdk-1.0.0
-
       - name: Cache nRF Connect SDK
         uses: actions/cache@v4
         with:
@@ -41,46 +35,13 @@ jobs:
             firmware-bluetooth/.west
           key: nrf-sdk-${{ hashFiles('firmware-bluetooth/build.sh') }}
 
-      - name: Install Zephyr SDK 1.0.0 if missing
-        run: |
-          set -e
-          if [ ! -d "/opt/toolchains/zephyr-sdk-1.0.0" ]; then
-            mkdir -p /opt/toolchains
-            python3 - << 'EOF'
-          import json, os, subprocess, urllib.request
-
-          req = urllib.request.Request(
-              "https://github.com",
-              headers={"User-Agent": "gh-actions"}
-          )
-          release = json.loads(urllib.request.urlopen(req).read().decode())
-          assets = {a["name"]: a["browser_download_url"] for a in release["assets"]}
-
-          def download_and_extract(prefix, dest_dir):
-              match = next((name for name in assets if name.startswith(prefix) and "linux-x86_64" in name and not name.endswith(".sha256")), None)
-              if not match:
-                  raise RuntimeError(f"Asset not found for {prefix}. Available: {list(assets.keys())}")
-              print(f"Downloading {match}...")
-              archive = os.path.join("/opt/toolchains", match)
-              urllib.request.urlretrieve(assets[match], archive)
-              if match.endswith(".7z"):
-                  subprocess.run(["7z", "x", archive, f"-o{dest_dir}", "-y"], check=True)
-              else:
-                  subprocess.run(["tar", "xf", archive, "-C", dest_dir], check=True)
-              os.remove(archive)
-
-          download_and_extract("zephyr-sdk-1.0.0_linux-x86_64_minimal", "/opt/toolchains")
-          download_and_extract("toolchain_linux-x86_64_arm-zephyr-eabi", "/opt/toolchains/zephyr-sdk-1.0.0")
-          EOF
-            cd /opt/toolchains/zephyr-sdk-1.0.0
-            ./setup.sh -h -c
-          fi
-
       - name: Build nice!nano firmware
         working-directory: firmware-bluetooth
-        env:
-          ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-1.0.0
-        run: ./build.sh nice_nano
+        run: |
+          SDK_DIR=$(ls -d /opt/toolchains/zephyr-sdk-* | head -n 1)
+          echo "Using pre-installed Zephyr SDK at: $SDK_DIR"
+          "$SDK_DIR/setup.sh" -c
+          ZEPHYR_SDK_INSTALL_DIR="$SDK_DIR" CMAKE_PREFIX_PATH="/opt/toolchains" ./build.sh nice_nano
 
       - name: Upload nice!nano UF2 artifact
         uses: actions/upload-artifact@v4
