@@ -335,5 +335,6 @@ target_compile_definitions(remapper_uart_bridge PRIVATE
     PIO_USB_ROOT_PORT_CNT=3
 )
 
+pico_set_binary_type(remapper_uart_bridge copy_to_ram)
 add_fault_led(remapper_uart_bridge)
 pico_add_extra_outputs(remapper_uart_bridge)
