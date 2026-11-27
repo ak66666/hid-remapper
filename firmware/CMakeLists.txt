@@ -157,9 +157,10 @@ add_executable(remapper_dual_b
     src/app_driver.cc
     src/xbox.cc
 )
-target_include_directories(remapper_dual_b PRIVATE
+target_include_directories(remapper_uart_bridge PRIVATE
     src
-    src/tusb_config_host
+    src/tusb_config_both
+    ${PICO_PIO_USB_PATH}
 )
 target_link_libraries(remapper_dual_b
     pico_stdlib
