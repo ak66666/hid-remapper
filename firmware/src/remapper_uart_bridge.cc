@@ -23,19 +23,6 @@
 
 #define BRIDGE_LED_PIN 17
 
-// 1. Add a 2-second heartbeat blink in manual_sof so we know the 1ms SOF timer is running:
-static bool __no_inline_not_in_flash_func(manual_sof)(repeating_timer_t* rt) {
-    (void)rt;
-    pio_usb_host_frame();
-    static uint16_t sof_count = 0;
-    if (++sof_count >= 2000) {
-        sof_count = 0;
-        led_pulse(10);
-    }
-    return true;
-}
-
-
 static volatile uint64_t led_off_at_us = 0;
 
 static void led_pulse(uint32_t duration_ms) {
@@ -96,6 +83,11 @@ static void uart_send_frame(BridgeMsgType type, const uint8_t* payload, uint16_t
 static bool __no_inline_not_in_flash_func(manual_sof)(repeating_timer_t* rt) {
     (void)rt;
     pio_usb_host_frame();
+    static uint16_t sof_count = 0;
+    if (++sof_count >= 2000) {
+        sof_count = 0;
+        led_pulse(10);
+    }
     return true;
 }
 
@@ -116,11 +108,11 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
 
     static uint8_t msg_buf[7 + 512];
     uint16_t copy_len = (desc_len > 512) ? 512 : desc_len;
-    memcpy(&msg_buf[0], &iface, 2);
-    memcpy(&msg_buf[2], &vid, 2);
-    memcpy(&msg_buf[4], &pid, 2);
-    msg_buf[6] = hub_port;
-    memcpy(&msg_buf[7], desc_report, copy_len);
+    memcpy(&msg_buf, &iface, 2);
+    memcpy(&msg_buf, &vid, 2);
+    memcpy(&msg_buf, &pid, 2);
+    msg_buf = hub_port;
+    memcpy(&msg_buf, desc_report, copy_len);
 
     uart_send_frame(BridgeMsgType::DEV_CONNECTED, msg_buf, 7 + copy_len);
 
@@ -144,9 +136,9 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, u
 
     static uint8_t msg_buf[3 + 64];
     uint16_t copy_len = (len > 64) ? 64 : len;
-    memcpy(&msg_buf[0], &iface, 2);
-    msg_buf[2] = 0; // TinyUSB includes report_id inside report[0] when report IDs are used
-    memcpy(&msg_buf[3], report, copy_len);
+    memcpy(&msg_buf, &iface, 2);
+    msg_buf = 0; // TinyUSB includes report_id inside report when report IDs are used
+    memcpy(&msg_buf, report, copy_len);
 
     uart_send_frame(BridgeMsgType::INPUT_REPORT, msg_buf, 3 + copy_len);
 
@@ -160,7 +152,7 @@ static void poll_uart_rx() {
     static BridgeMsgType msg_type;
     static uint16_t payload_len = 0;
     static uint16_t payload_pos = 0;
-    static uint8_t payload[128];
+    static uint8_t payload;
 
     while (uart_is_readable(BRIDGE_UART)) {
         uint8_t b = uart_getc(BRIDGE_UART);
@@ -193,7 +185,7 @@ static void poll_uart_rx() {
                 if (payload_pos >= payload_len) state = RxState::CRC;
                 break;
             case RxState::CRC: {
-                uint8_t hdr_bytes[3] = { (uint8_t)msg_type, (uint8_t)(payload_len & 0xFF), (uint8_t)(payload_len >> 8) };
+                uint8_t hdr_bytes = { (uint8_t)msg_type, (uint8_t)(payload_len & 0xFF), (uint8_t)(payload_len >> 8) };
                 uint8_t crc = bridge_crc8(hdr_bytes, 3);
                 for (uint16_t i = 0; i < payload_len; i++) {
                     crc ^= payload[i];
@@ -204,14 +196,14 @@ static void poll_uart_rx() {
                 if (crc == b && payload_len >= 3) {
                     led_pulse(25);
                     uint16_t iface;
-                    memcpy(&iface, &payload[0], 2);
+                    memcpy(&iface, &payload, 2);
                     uint8_t dev_addr = (iface >> 4) & 0x0F;
                     uint8_t instance = iface & 0x0F;
-                    uint8_t report_id = payload[2];
+                    uint8_t report_id = payload;
                     if (msg_type == BridgeMsgType::OUT_REPORT) {
-                        tuh_hid_send_report(dev_addr, instance, report_id, &payload[3], payload_len - 3);
+                        tuh_hid_send_report(dev_addr, instance, report_id, &payload, payload_len - 3);
                     } else if (msg_type == BridgeMsgType::SET_FEATURE) {
-                        tuh_hid_set_report(dev_addr, instance, report_id, HID_REPORT_TYPE_FEATURE, &payload[3], payload_len - 3);
+                        tuh_hid_set_report(dev_addr, instance, report_id, HID_REPORT_TYPE_FEATURE, &payload, payload_len - 3);
                     }
                 }
                 state = RxState::MAGIC0;
@@ -231,17 +223,16 @@ int main() {
     uart_set_format(BRIDGE_UART, 8, 1, UART_PARITY_NONE);
     uart_set_fifo_enabled(BRIDGE_UART, true);
 
-// 2. Inside main(), test Port 1 (GP2/GP3) alone first and match remapper_single.cc's exact order:
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
     pio_cfg.pin_dp = USB_PORT1_DP;
     pio_cfg.skip_alarm_pool = true;
-    tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+    tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
 
     tusb_rhport_init_t host_init = {
         .role = TUSB_ROLE_HOST,
         .speed = TUSB_SPEED_AUTO,
     };
-    tusb_init(BOARD_TUH_RHPORT, &host_init);
+    tusb_init(1, &host_init);
 
     add_repeating_timer_us(-1000, manual_sof, NULL, &sof_timer);
 
