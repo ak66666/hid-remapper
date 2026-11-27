@@ -23,6 +23,19 @@
 
 #define BRIDGE_LED_PIN 17
 
+// 1. Add a 2-second heartbeat blink in manual_sof so we know the 1ms SOF timer is running:
+static bool __no_inline_not_in_flash_func(manual_sof)(repeating_timer_t* rt) {
+    (void)rt;
+    pio_usb_host_frame();
+    static uint16_t sof_count = 0;
+    if (++sof_count >= 2000) {
+        sof_count = 0;
+        led_pulse(10);
+    }
+    return true;
+}
+
+
 static volatile uint64_t led_off_at_us = 0;
 
 static void led_pulse(uint32_t duration_ms) {
@@ -218,21 +231,17 @@ int main() {
     uart_set_format(BRIDGE_UART, 8, 1, UART_PARITY_NONE);
     uart_set_fifo_enabled(BRIDGE_UART, true);
 
+// 2. Inside main(), test Port 1 (GP2/GP3) alone first and match remapper_single.cc's exact order:
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
     pio_cfg.pin_dp = USB_PORT1_DP;
-    pio_cfg.pinout = PIO_USB_PINOUT_DPDM;
     pio_cfg.skip_alarm_pool = true;
-    tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+    tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
 
     tusb_rhport_init_t host_init = {
         .role = TUSB_ROLE_HOST,
         .speed = TUSB_SPEED_AUTO,
     };
-    tusb_init(1, &host_init);
-
-    // Register Port 2 (GP4/GP5) and Port 3 (GP6/GP7) as additional root host ports
-    pio_usb_host_add_port(USB_PORT2_DP, PIO_USB_PINOUT_DPDM);
-    pio_usb_host_add_port(USB_PORT3_DP, PIO_USB_PINOUT_DPDM);
+    tusb_init(BOARD_TUH_RHPORT, &host_init);
 
     add_repeating_timer_us(-1000, manual_sof, NULL, &sof_timer);
 
