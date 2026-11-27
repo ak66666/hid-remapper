@@ -333,35 +333,3 @@ target_compile_definitions(remapper_uart_bridge PRIVATE
 
 add_fault_led(remapper_uart_bridge)
 pico_add_extra_outputs(remapper_uart_bridge)
-
-# UART bridge for RP2040 + nice!nano combo unit
-add_executable(remapper_uart_bridge
-    src/remapper_uart_bridge.cc
-)
-
-target_include_directories(remapper_uart_bridge PRIVATE
-    src
-    src/tusb_config_both
-    ${PICO_PIO_USB_PATH}
-)
-
-target_link_libraries(remapper_uart_bridge
-    pico_stdlib
-    pico_multicore
-    hardware_pio
-    hardware_dma
-    tinyusb_host
-    tinyusb_board
-    tinyusb_pico_pio_usb
-)
-
-target_compile_definitions(remapper_uart_bridge PRIVATE
-    PIO_USB_USE_TINYUSB
-    PICO_DEFAULT_PIO_USB_DP_PIN=2
-    PICO_DEFAULT_PIO_USB_DP_PIN2=4
-    PICO_DEFAULT_PIO_USB_DP_PIN3=6
-    PIO_USB_ROOT_PORT_CNT=3
-)
-
-add_fault_led(remapper_uart_bridge)
-pico_add_extra_outputs(remapper_uart_bridge)
