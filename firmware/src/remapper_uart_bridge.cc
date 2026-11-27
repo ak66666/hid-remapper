@@ -1,11 +1,14 @@
 #include <cstdio>
 #include <cstring>
 
+#include <bsp/board_api.h>
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "pico/multicore.h"
+#include "pico/platform.h"
 #include "pico/stdlib.h"
+#include "pico/time.h"
 
 #include "pio_usb.h"
 #include "tusb.h"
@@ -77,13 +80,21 @@ static void uart_send_frame(BridgeMsgType type, const uint8_t* payload, uint16_t
     uart_write_blocking(BRIDGE_UART, &crc, 1);
 }
 
+// 1 ms SOF timer required by Pico-PIO-USB when skip_alarm_pool = true
+static bool __no_inline_not_in_flash_func(manual_sof)(repeating_timer_t* rt) {
+    (void)rt;
+    pio_usb_host_frame();
+    return true;
+}
+
+static repeating_timer_t sof_timer;
+
 // Core 1 runs Pico-PIO-USB bit-banging loop for all 3 root ports
 static void core1_main() {
-    sleep_ms(10);
-
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
     pio_cfg.pin_dp = USB_PORT1_DP;
     pio_cfg.pinout = PIO_USB_PINOUT_DPDM;
+    pio_cfg.skip_alarm_pool = true;
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
 
     tusb_rhport_init_t host_init = {
@@ -95,6 +106,8 @@ static void core1_main() {
     // Register Port 2 (GP4/GP5) and Port 3 (GP6/GP7) as additional root host ports
     pio_usb_host_add_port(USB_PORT2_DP, PIO_USB_PINOUT_DPDM);
     pio_usb_host_add_port(USB_PORT3_DP, PIO_USB_PINOUT_DPDM);
+
+    add_repeating_timer_us(-1000, manual_sof, NULL, &sof_timer);
 
     while (true) {
         tuh_task();
@@ -108,7 +121,11 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     uint16_t vid = 0, pid = 0;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
-    uint8_t hub_port = dev_addr;
+    // #5: Determine physical root socket (1, 2, or 3) or external hub port
+    tuh_bus_info_t bus_info;
+    tuh_bus_info_get(dev_addr, &bus_info);
+    uint8_t hub_port = (bus_info.hub_addr == 0) ? bus_info.rhport : bus_info.hub_port;
+
     uint16_t iface = make_interface_id(dev_addr, instance);
 
     static uint8_t msg_buf[7 + 512];
@@ -124,10 +141,9 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     tuh_hid_receive_report(dev_addr, instance);
 }
 
-
 extern "C" void tuh_mount_cb(uint8_t dev_addr) {
     (void)dev_addr;
-    led_pulse(500); // Long 500ms pulse = electrical USB device detected & addressed!
+    led_pulse(500);
 }
 
 extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
@@ -221,6 +237,7 @@ static void poll_uart_rx() {
 
 int main() {
     led_init();
+    board_init();
 
     uart_init(BRIDGE_UART, UART_BRIDGE_BAUD);
     gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
