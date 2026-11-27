@@ -124,6 +124,12 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     tuh_hid_receive_report(dev_addr, instance);
 }
 
+
+extern "C" void tuh_mount_cb(uint8_t dev_addr) {
+    (void)dev_addr;
+    led_pulse(500); // Long 500ms pulse = electrical USB device detected & addressed!
+}
+
 extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     led_pulse(200);
 
