@@ -108,11 +108,11 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
 
     static uint8_t msg_buf[7 + 512];
     uint16_t copy_len = (desc_len > 512) ? 512 : desc_len;
-    memcpy(&msg_buf, &iface, 2);
-    memcpy(&msg_buf, &vid, 2);
-    memcpy(&msg_buf, &pid, 2);
-    msg_buf = hub_port;
-    memcpy(&msg_buf, desc_report, copy_len);
+    memcpy(msg_buf + 0, &iface, 2);
+    memcpy(msg_buf + 2, &vid, 2);
+    memcpy(msg_buf + 4, &pid, 2);
+    *(msg_buf + 6) = hub_port;
+    memcpy(msg_buf + 7, desc_report, copy_len);
 
     uart_send_frame(BridgeMsgType::DEV_CONNECTED, msg_buf, 7 + copy_len);
 
@@ -136,9 +136,9 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, u
 
     static uint8_t msg_buf[3 + 64];
     uint16_t copy_len = (len > 64) ? 64 : len;
-    memcpy(&msg_buf, &iface, 2);
-    msg_buf = 0; // TinyUSB includes report_id inside report when report IDs are used
-    memcpy(&msg_buf, report, copy_len);
+    memcpy(msg_buf + 0, &iface, 2);
+    *(msg_buf + 2) = 0; // TinyUSB includes report_id inside report[0] when report IDs are used
+    memcpy(msg_buf + 3, report, copy_len);
 
     uart_send_frame(BridgeMsgType::INPUT_REPORT, msg_buf, 3 + copy_len);
 
@@ -152,7 +152,7 @@ static void poll_uart_rx() {
     static BridgeMsgType msg_type;
     static uint16_t payload_len = 0;
     static uint16_t payload_pos = 0;
-    static uint8_t payload;
+    static uint8_t payload[128]; 
 
     while (uart_is_readable(BRIDGE_UART)) {
         uint8_t b = uart_getc(BRIDGE_UART);
@@ -185,7 +185,7 @@ static void poll_uart_rx() {
                 if (payload_pos >= payload_len) state = RxState::CRC;
                 break;
             case RxState::CRC: {
-                uint8_t hdr_bytes = { (uint8_t)msg_type, (uint8_t)(payload_len & 0xFF), (uint8_t)(payload_len >> 8) };
+                uint8_t hdr_bytes[3] = { (uint8_t)msg_type, (uint8_t)(payload_len & 0xFF), (uint8_t)(payload_len >> 8) };
                 uint8_t crc = bridge_crc8(hdr_bytes, 3);
                 for (uint16_t i = 0; i < payload_len; i++) {
                     crc ^= payload[i];
@@ -196,21 +196,21 @@ static void poll_uart_rx() {
                 if (crc == b && payload_len >= 3) {
                     led_pulse(25);
                     uint16_t iface;
-                    memcpy(&iface, &payload, 2);
+                    memcpy(&iface, payload + 0, 2);
                     uint8_t dev_addr = (iface >> 4) & 0x0F;
                     uint8_t instance = iface & 0x0F;
-                    uint8_t report_id = payload;
+                    uint8_t report_id = *(payload + 2);
                     if (msg_type == BridgeMsgType::OUT_REPORT) {
-                        tuh_hid_send_report(dev_addr, instance, report_id, &payload, payload_len - 3);
+                        tuh_hid_send_report(dev_addr, instance, report_id, payload + 3, payload_len - 3);
                     } else if (msg_type == BridgeMsgType::SET_FEATURE) {
-                        tuh_hid_set_report(dev_addr, instance, report_id, HID_REPORT_TYPE_FEATURE, &payload, payload_len - 3);
+                        tuh_hid_set_report(dev_addr, instance, report_id, HID_REPORT_TYPE_FEATURE, payload + 3, payload_len - 3);
                     }
                 }
                 state = RxState::MAGIC0;
                 break;
+                }
             }
-        }
-    }
+    	}
 }
 
 int main() {
