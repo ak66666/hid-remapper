@@ -1,4 +1,5 @@
 # HID Remapper
+
 << THE ORIGINAL PROJECT DESCRIPTION IS AFTER THE CUSTOM ADDITION SECTION >>
 
 ## Custom Additions (`password_protection` branch)
