@@ -152,7 +152,7 @@ static void poll_uart_rx() {
     static BridgeMsgType msg_type;
     static uint16_t payload_len = 0;
     static uint16_t payload_pos = 0;
-    static uint8_t payload[128]; 
+    static uint8_t payload[128];
 
     while (uart_is_readable(BRIDGE_UART)) {
         uint8_t b = uart_getc(BRIDGE_UART);
@@ -208,9 +208,9 @@ static void poll_uart_rx() {
                 }
                 state = RxState::MAGIC0;
                 break;
-                }
             }
-    	}
+        }
+    }
 }
 
 int main() {
@@ -227,6 +227,7 @@ int main() {
     pio_cfg.pin_dp = USB_PORT1_DP;
     pio_cfg.skip_alarm_pool = true;
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+    add_repeating_timer_us(-1000, manual_sof, NULL, &sof_timer);
 
     tusb_rhport_init_t host_init = {
         .role = TUSB_ROLE_HOST,
@@ -234,7 +235,9 @@ int main() {
     };
     tusb_init(1, &host_init);
 
-    add_repeating_timer_us(-1000, manual_sof, NULL, &sof_timer);
+    // Register Port 2 (GP4/GP5) and Port 3 (GP6/GP7) as additional root host ports
+    pio_usb_host_add_port(USB_PORT2_DP, PIO_USB_PINOUT_DPDM);
+    pio_usb_host_add_port(USB_PORT3_DP, PIO_USB_PINOUT_DPDM);
 
     while (true) {
         tuh_task();
