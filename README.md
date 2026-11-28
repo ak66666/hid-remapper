@@ -1,9 +1,8 @@
 # HID Remapper
 
-<< THE ORIGINAL PROJECT DESCRIPTION IS AFTER THE CUSTOM ADDITION SECTION >>
+====THE ORIGINAL PROJECT DESCRIPTION IS AFTER THE CUSTOM ADDITION SECTION====
 
 ## Custom Additions (`password_protection` branch)
-<< 
 
 This fork extends the `nice!nano` (nRF52840) Bluetooth build and web configurator with three additional features:
 
@@ -46,8 +45,23 @@ Pushing to `password_protection` automatically builds both firmware images via G
 1. **`remapper_nice_nano.uf2`:** Double-tap reset on the `nice!nano` and copy onto the `NICENANO` drive.
 2. **`remapper_uart_bridge.uf2`:** Enter bootloader mode on the `Pro Micro RP2040` and copy onto the `RPI-RP2` drive.
 
+### How to use the configuration tool
 
-<< BELOW IS THE ORIGINAL PROJECT DESCRIPTION >>
+A live version of the _updated_ web configuration tool can be found at [ak66666.github.io/hid-remapper](https://ak66666.github.io/hid-remapper/).
+
+- Password configuration and removal elements added to Action tab.
+- If password is set - the configuration page will ask for it on the connection. 
+- If the passsword is not provided - the tool will be in read-only mode, updates will fail.
+
+- Connected Bluetooth device list is added to Action tab.
+- Individual devices could be removed (forgotten) from that list.
+
+Original configuration page works in read-only mode, attempts to update will result in an error, not actually modifying the settings.
+
+For all other details on how to use it, please see the original [HID Remapper Manual](https://www.remapper.org/manual/).
+
+
+== BELOW IS THE ORIGINAL PROJECT DESCRIPTION ==
 
 
 
