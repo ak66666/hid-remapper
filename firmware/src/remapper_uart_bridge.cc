@@ -86,7 +86,7 @@ static bool __no_inline_not_in_flash_func(manual_sof)(repeating_timer_t* rt) {
     static uint16_t sof_count = 0;
     if (++sof_count >= 2000) {
         sof_count = 0;
-        led_pulse(10);
+	led_pulse(gpio_get(USB_PORT1_DP) ? 150 : 10);
     }
     return true;
 }

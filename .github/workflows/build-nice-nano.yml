@@ -16,40 +16,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-nice-nano:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/zephyrproject-rtos/ci:v0.29.2
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Cache nRF Connect SDK
-        uses: actions/cache@v4
-        with:
-          path: |
-            firmware-bluetooth/sdk
-            firmware-bluetooth/.west
-          key: nrf-sdk-${{ hashFiles('firmware-bluetooth/build.sh') }}
-
-      - name: Build nice!nano firmware
-        working-directory: firmware-bluetooth
-        run: |
-          SDK_DIR=$(ls -d /opt/toolchains/zephyr-sdk-* | head -n 1)
-          echo "Using pre-installed Zephyr SDK at: $SDK_DIR"
-          "$SDK_DIR/setup.sh" -c
-          ZEPHYR_SDK_INSTALL_DIR="$SDK_DIR" CMAKE_PREFIX_PATH="/opt/toolchains" ./build.sh nice_nano
-
-      - name: Upload nice!nano UF2 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: remapper-nice-nano-uf2
-          path: firmware-bluetooth/artifacts/remapper_nice_nano.uf2
-          if-no-files-found: error
-
   build-rp2040-bridge:
     runs-on: ubuntu-latest
 
@@ -78,25 +44,3 @@ jobs:
           name: remapper-uart-bridge-uf2
           path: firmware/build/remapper_uart_bridge.uf2
           if-no-files-found: error
-
-  deploy-web-configurator:
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: config-tool-web
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
