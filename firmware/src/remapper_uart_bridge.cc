@@ -57,8 +57,6 @@ static inline uint16_t make_interface_id(uint8_t dev_addr, uint8_t instance) {
 }
 
 static void uart_send_frame(BridgeMsgType type, const uint8_t* payload, uint16_t len) {
-    //led_pulse(25);
-
     bridge_header_t hdr = {
         .magic0 = UART_BRIDGE_MAGIC0,
         .magic1 = UART_BRIDGE_MAGIC1,
@@ -90,6 +88,8 @@ static repeating_timer_t sof_timer;
 
 // TinyUSB Host Callbacks
 extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
+    led_pulse(150);
+
     uint16_t vid = 0, pid = 0;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
@@ -112,28 +112,22 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     tuh_hid_receive_report(dev_addr, instance);
 }
 
-extern "C" void tuh_mount_cb(uint8_t dev_addr) {
-    (void)dev_addr;
-    //led_pulse(500);
-    gpio_put(BRIDGE_LED_PIN, 1); // SOLID ON = USB device enumerated!
-}
-
 extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
-    //led_pulse(200);
-    gpio_put(BRIDGE_LED_PIN, 0); // OFF on disconnect
+    led_pulse(150);
+
     uint16_t iface = make_interface_id(dev_addr, instance);
     uart_send_frame(BridgeMsgType::DEV_DISCONNECTED, (const uint8_t*)&iface, sizeof(iface));
 }
 
 extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
-    gpio_xor_mask(1u << BRIDGE_LED_PIN); // Toggle LED on every mouse packet!
+    led_pulse(20);
 
     uint16_t iface = make_interface_id(dev_addr, instance);
 
     static uint8_t msg_buf[3 + 64];
     uint16_t copy_len = (len > 64) ? 64 : len;
     memcpy(msg_buf + 0, &iface, 2);
-    *(msg_buf + 2) = 0;
+    *(msg_buf + 2) = 0; // TinyUSB includes report_id inside report when report IDs are used
     memcpy(msg_buf + 3, report, copy_len);
 
     uart_send_frame(BridgeMsgType::INPUT_REPORT, msg_buf, 3 + copy_len);
@@ -190,7 +184,7 @@ static void poll_uart_rx() {
                     }
                 }
                 if (crc == b && payload_len >= 3) {
-                    led_pulse(25);
+                    led_pulse(20);
                     uint16_t iface;
                     memcpy(&iface, payload + 0, 2);
                     uint8_t dev_addr = (iface >> 4) & 0x0F;
@@ -234,6 +228,6 @@ int main() {
     while (true) {
         tuh_task();
         poll_uart_rx();
-        //led_update();
+        led_update();
     }
 }
