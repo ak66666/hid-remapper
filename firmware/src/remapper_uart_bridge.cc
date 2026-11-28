@@ -229,11 +229,7 @@ int main() {
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
     add_repeating_timer_us(-1000, manual_sof, NULL, &sof_timer);
 
-    tusb_rhport_init_t host_init = {
-        .role = TUSB_ROLE_HOST,
-        .speed = TUSB_SPEED_AUTO,
-    };
-    tusb_init(1, &host_init);
+    tusb_init();
 
     // Register Port 2 (GP4/GP5) and Port 3 (GP6/GP7) as additional root host ports
     pio_usb_host_add_port(USB_PORT2_DP, PIO_USB_PINOUT_DPDM);
