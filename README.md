@@ -1,4 +1,58 @@
 # HID Remapper
+<< THE ORIGINAL PROJECT DESCRIPTION IS AFTER THE CUSTOM ADDITION SECTION >>
+
+## Custom Additions (`password_protection` branch)
+<< 
+
+This fork extends the `nice!nano` (nRF52840) Bluetooth build and web configurator with three additional features:
+
+### 1. Optional Configuration Password Protection
+- Protects device configuration writes (`Save to device`), Bluetooth pairing/unpairing, and firmware flashing behind an optional user-defined password stored in non-volatile flash (`remapper/auth`).
+- **Read-Only Access While Locked:** Loading existing mappings (`Load from device`), monitoring live HID inputs, and viewing paired Bluetooth devices remain accessible without unlocking.
+- **Session Unlock:** Entering the password in the web configurator unlocks write operations for the current USB connection; unplugging or resetting the device automatically re-locks it.
+- Supports setting, changing, and removing the password directly from the **Actions** tab in the web configurator.
+
+### 2. Paired Bluetooth Devices Manager
+- Displays all bonded Bluetooth LE HID devices (`index`, `MAC address`, `address type`, and live `Connected` / `Disconnected` status) in the **Actions** tab.
+- Automatically refreshes when devices pair, connect, disconnect, or are forgotten, as well as when the web configurator is opened or the remapper is plugged in.
+- Supports forgetting individual paired devices (`Forget`) or clearing all bonds (`Forget all devices`).
+
+### 3. Wired USB Ports via Pro Micro RP2040 UART Co-Processor
+Adds **3 wired USB-A host ports** (`Hub port` 1, 2, and 3) to the `nice!nano` Bluetooth build using a **Pro Micro RP2040** running `remapper_uart_bridge.uf2` over a `921,600` baud UART link (`UART0`), allowing wired USB and Bluetooth devices to share a single configuration, layer state, expressions, and password lock.
+
+#### Microcontroller Wiring (`nice!nano` <-> `Pro Micro RP2040`)
+
+| `nice!nano` Pin | `Pro Micro RP2040` Pin | Function |
+| :--- | :--- | :--- |
+| `VBUS` / `RAW` (5V) | `RAW` (5V) | 5V supply from USB-C *(tap pre-diode `VBUS` if `RAW` drops below `4.6V`)* |
+| `GND` | `GND` | Common ground |
+| `TX` (`P0.06`) | `RX` (`GP1`) | UART0 (`nice!nano` -> `RP2040` for LED / `OUT` & `FEATURE` reports) |
+| `RX` (`P0.08`) | `TX` (`GP0`) | UART0 (`RP2040` -> `nice!nano` for HID descriptors & input reports) |
+
+#### Hand-Wired USB-A Sockets (`Pro Micro RP2040`)
+Each USB-A female socket requires a **`15 KOhm` pull-down resistor** (`10 KOhm`–`22 KOhm`) from both `D+` and `D-` to `GND` (6 resistors total):
+
+| USB-A Socket | Pin 1 (`5V`) | Pin 2 (`D-`) | Pin 3 (`D+`) | Pin 4 (`GND`) | Pull-Down Resistors |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Socket 1** (`Hub port 1`) | `5V` (`VBUS`) | `GP3` | `GP2` | `GND` | `15 KOhm` on `GP2` & `GP3` to `GND` |
+| **Socket 2** (`Hub port 2`) | `5V` (`VBUS`) | `GP5` | `GP4` | `GND` | `15 KOhm` on `GP4` & `GP5` to `GND` |
+| **Socket 3** (`Hub port 3`) | `5V` (`VBUS`) | `GP7` | `GP6` | `GND` | `15 KOhm` on `GP6` & `GP7` to `GND` |
+
+- **Status LED (`GP17`):** Blinks 3 times on boot, pulses `150 ms` when a wired USB device connects or disconnects, and pulses `20 ms` on HID report traffic.
+
+### Building & Flashing
+Pushing to `password_protection` automatically builds both firmware images via GitHub Actions (`.github/workflows/build-nice-nano.yml`) and deploys the web configurator to GitHub Pages:
+1. **`remapper_nice_nano.uf2`:** Double-tap reset on the `nice!nano` and copy onto the `NICENANO` drive.
+2. **`remapper_uart_bridge.uf2`:** Enter bootloader mode on the `Pro Micro RP2040` and copy onto the `RPI-RP2` drive.
+
+
+<< BELOW IS THE ORIGINAL PROJECT DESCRIPTION >>
+
+
+
+
+
+# HID Remapper
 
 _For user documentation please see the project's website at [remapper.org](https://www.remapper.org/)._
 
